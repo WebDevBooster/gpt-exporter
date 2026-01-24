@@ -18,3 +18,20 @@ If you use **Projects** in ChatGPT (like I do) to organize things, GPT Exporter 
 
 If you export no more than 3 conversations, then the export will be separate `.md` files. And if it's more than 3, then the export will be one `.zip` file that contains all the files. 
 
+## Installation 
+
+If you're unfamiliar with installing unpacked Chrome browser extensions, here's how to do it: 
+
+First, click the **Code** button at the top of this page on https://github.com/WebDevBooster/gpt-exporter and click "Download ZIP" and unzip it to a place where you can leave it on your computer forever. 
+
+Then: 
+
+1) Click the 3 dots in Chrome, then **Extensions > Manage extensions**. 
+2) Turn on the **Developer mode** toggle in the upper right corner. 
+3) Click the **Load unpacked** button in the upper left corner. 
+4) Navigate to the unzipped folder, click it and click the **Select folder** button. 
+
+That's it. 
+The GPT Exporter extension is now installed and active.  
+Remember to de-activate it (after downloading your stuff from ChatGPT) by clicking the toggle in the lower right corner of the GPT Exporter extension card. 
+
