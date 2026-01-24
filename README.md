@@ -16,3 +16,5 @@ During the download process you can open a new browser window and do any non-Cha
 
 If you use **Projects** in ChatGPT (like I do) to organize things, GPT Exporter will automatically create folders with those project names and put all the corresponding `.md` files inside. 
 
+If you export no more than 3 conversations, then the export will be separate `.md` files. And if it's more than 3, then the export will be one `.zip` file that contains all the files. 
+
