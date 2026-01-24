@@ -33,5 +33,8 @@ Then:
 
 That's it. 
 The GPT Exporter extension is now installed and active.  
+Go to a ChatGPT tab, reload it and you're good to go.  
+You can temporarily or permanently pin this extension to your Chrome navbar by clicking the extensions icon in the upper right and clicking the pin icon next to GPT Explorer there. 
+
 Remember to de-activate it (after downloading your stuff from ChatGPT) by clicking the toggle in the lower right corner of the GPT Exporter extension card. 
 
