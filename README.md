@@ -1,2 +1,4 @@
-# gpt-exporter
-GPT Exporter: Export ChatGPT conversations as Markdown files optimized for Obsidian
+# GPT Exporter
+
+Export ChatGPT conversations as Markdown files optimized for [Obsidian](https://obsidian.md/).
+
