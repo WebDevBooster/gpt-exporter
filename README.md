@@ -22,7 +22,7 @@ If you export no more than 3 conversations, then the export will be separate `.m
 
 If you're unfamiliar with installing unpacked Chrome browser extensions, here's how to do it: 
 
-First, click the **Code** button at the top of this page on https://github.com/WebDevBooster/gpt-exporter and click "Download ZIP" and unzip it to a place where you can leave it on your computer forever. 
+First, click the **Code** button at the top of this page (https://github.com/WebDevBooster/gpt-exporter), click "Download ZIP" and unzip it to a place where you can leave it on your computer forever. 
 
 Then: 
 
