@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GPT Exporter</title>
+    <link rel="stylesheet" href="popup.css">
+</head>
+
+<body>
+    <div class="container">
+        <header>
+            <h1>GPT Exporter</h1>
+            <div class="header-actions">
+                <button id="btnPopout" class="btn-icon-only" title="Open in window (stays open while exporting)">⧉</button>
+                <div id="connectionStatus" class="status disconnected">
+                    <span class="status-dot"></span>
+                    <span class="status-text">Checking...</span>
+                </div>
+            </div>
+        </header>
+
+        <section class="stats">
+            <div class="stat-item">
+                <span class="stat-value" id="exportedCount">—</span>
+                <span class="stat-label">Exported</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-value" id="lastSync">—</span>
+                <span class="stat-label">Last Sync</span>
+            </div>
+        </section>
+
+        <section class="settings">
+            <h2>Settings</h2>
+            <div class="setting-item">
+                <label for="downloadFolder">Download Folder</label>
+                <input type="text" id="downloadFolder" placeholder="GPT-Exports" spellcheck="false">
+                <span class="setting-hint">Subfolder in Downloads (leave empty for root)</span>
+            </div>
+            <div class="setting-item">
+                <label for="exportLimit">Export Limit</label>
+                <input type="number" id="exportLimit" min="0" placeholder="0 = all">
+                <span class="setting-hint">Max conversations to export (0 = no limit)</span>
+            </div>
+        </section>
+
+        <section class="formats">
+            <h2>Export Formats</h2>
+            <label class="checkbox-label">
+                <input type="checkbox" id="formatMarkdown" checked>
+                <span>Markdown (.md)</span>
+            </label>
+            <label class="checkbox-label">
+                <input type="checkbox" id="formatJson">
+                <span>JSON Backup</span>
+            </label>
+        </section>
+
+        <section class="actions">
+            <button id="btnExportNew" class="btn btn-primary" disabled>
+                <span class="btn-icon">🔄</span>
+                Export New/Updated
+            </button>
+            <button id="btnExportAll" class="btn btn-secondary" disabled>
+                <span class="btn-icon">📥</span>
+                Export All
+            </button>
+        </section>
+
+        <section id="progressSection" class="progress-section hidden">
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+            <p class="progress-text" id="progressText">Starting...</p>
+        </section>
+
+        <!-- Debug Log Section -->
+        <section class="log-section">
+            <h2>Log <button id="btnClearLog" class="btn-mini">Clear</button></h2>
+            <div id="logOutput" class="log-output"></div>
+        </section>
+
+        <footer>
+            <button id="btnClearHistory" class="btn-link">Clear Export History</button>
+        </footer>
+    </div>
+
+    <script src="popup.js"></script>
+</body>
+
+</html>

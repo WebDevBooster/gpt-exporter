@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Generate Icons</title>
+</head>
+
+<body>
+    <h1>Right-click each icon and "Save image as..."</h1>
+    <p>Save to: h:\gpt-exporter\icons\</p>
+
+    <h2>icon16.png (16x16)</h2>
+    <canvas id="icon16" width="16" height="16"></canvas>
+
+    <h2>icon48.png (48x48)</h2>
+    <canvas id="icon48" width="48" height="48"></canvas>
+
+    <h2>icon128.png (128x128)</h2>
+    <canvas id="icon128" width="128" height="128"></canvas>
+
+    <script>
+        function drawIcon(canvasId, size) {
+            const canvas = document.getElementById(canvasId);
+            const ctx = canvas.getContext('2d');
+
+            // Background
+            ctx.fillStyle = '#1a1a2e';
+            ctx.beginPath();
+            ctx.roundRect(0, 0, size, size, size * 0.15);
+            ctx.fill();
+
+            // Gradient for arrow
+            const gradient = ctx.createLinearGradient(0, 0, size, size);
+            gradient.addColorStop(0, '#10b981');
+            gradient.addColorStop(1, '#3b82f6');
+
+            ctx.strokeStyle = gradient;
+            ctx.fillStyle = gradient;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            ctx.lineWidth = size * 0.08;
+
+            // Draw download arrow
+            const centerX = size / 2;
+            const arrowTop = size * 0.22;
+            const arrowBottom = size * 0.58;
+            const arrowWidth = size * 0.25;
+
+            // Vertical line
+            ctx.beginPath();
+            ctx.moveTo(centerX, arrowTop);
+            ctx.lineTo(centerX, arrowBottom);
+            ctx.stroke();
+
+            // Arrow head
+            ctx.beginPath();
+            ctx.moveTo(centerX - arrowWidth, arrowBottom - arrowWidth * 0.8);
+            ctx.lineTo(centerX, arrowBottom);
+            ctx.lineTo(centerX + arrowWidth, arrowBottom - arrowWidth * 0.8);
+            ctx.stroke();
+
+            // Bottom bar
+            const barY = size * 0.72;
+            const barWidth = size * 0.5;
+            const barHeight = size * 0.08;
+            ctx.beginPath();
+            ctx.roundRect(centerX - barWidth / 2, barY, barWidth, barHeight, barHeight / 2);
+            ctx.fill();
+        }
+
+        drawIcon('icon16', 16);
+        drawIcon('icon48', 48);
+        drawIcon('icon128', 128);
+    </script>
+</body>
+
+</html>
