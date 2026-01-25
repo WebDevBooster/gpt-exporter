@@ -30,7 +30,7 @@ If you make any changes in one of the downloaded files, all those changes will b
 
 The ChatGPT website also gives you an option to download all your conversations. But they bunch it together into one single file and format it in a way that makes the whole thing almost useless. GPT Exporter makes this "backup" super useful. Just the great search functionality of Obsidian makes these downloaded conversations a thousand times more useful than the crappy search you get on the ChatGPT website. 
 
-Plus, despite the added frontmatter, the combined size of all `.md` files GPT Exporter downloads is almost 4 times smaller than the one giant (almost unusable) file the ChatGPT website gives you with their export. 
+Plus, despite the added frontmatter, the combined size of all `.md` files GPT Exporter downloads tends to be 3-4 times smaller than the one giant (almost unusable) file the ChatGPT website gives you with their export. (Because the GPT Exporter ignores all the useless crap.)
 
 ## Installation 
 
