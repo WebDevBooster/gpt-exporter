@@ -26,7 +26,9 @@ If you export no more than 3 conversations, then the export will be separate `.m
 ### Manual changes will be overwritten on update
 
 Remember:  
-If you make any changes in one of the downloaded files, all those changes will be overwritten later **IF** you later continue that conversation in ChatGPT and then download that updated chat. Essentially, GPT Exporter creates an extremely usable **backup** of your ChatGPT conversation. Especially when combined with Obsidian. The ChatGPT website also gives you an option to download all your conversation. But they bunch it together into one single file and format it in a way that makes the whole thing almost useless. GPT Exporter makes this "backup" super useful. Just the great search functionality of Obsidian makes these downloaded conversations a thousand times more useful than the crappy search you get on the ChatGPT website. 
+If you make any changes in one of the downloaded files, all those changes will be overwritten later **IF** you later continue that conversation in ChatGPT and then download that updated chat. Essentially, GPT Exporter creates an extremely usable **backup** of your ChatGPT conversations. Especially when combined with Obsidian. 
+
+The ChatGPT website also gives you an option to download all your conversation. But they bunch it together into one single file and format it in a way that makes the whole thing almost useless. GPT Exporter makes this "backup" super useful. Just the great search functionality of Obsidian makes these downloaded conversations a thousand times more useful than the crappy search you get on the ChatGPT website. 
 
 Plus, despite the added frontmatter, the combined size of all `.md` files GPT Exporter downloads is only about 26% of the one giant (almost unusable) file the ChatGPT website gives you with their export. 
 
