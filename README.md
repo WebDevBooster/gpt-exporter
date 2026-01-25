@@ -8,7 +8,7 @@ Each file contains frontmatter designed to make it more useful (especially in Ob
 
 ### Lean but context-rich files
 
-Despite the added frontmatter, the combined size of all `.md` files GPT Exporter downloads tends to be **3-4 times smaller** than the one giant (almost unusable) file the ChatGPT website gives you with their export. Because the GPT Exporter ignores all the useless crap.
+Despite the added frontmatter, the combined size of all `.md` files GPT Exporter downloads is **3-4 times smaller** than the one giant (almost unusable) file the ChatGPT website gives you with their export. Because the GPT Exporter ignores all the useless crap.
 
 This also means:  
 Some of those lean but context-rich Markdown files could also be used for giving context to ChatGPT or other LLMs when you start a new project etc. (Leaner is better because context-window bloat tends to degrade LLM performance.)
