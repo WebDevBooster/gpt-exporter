@@ -337,7 +337,8 @@ function extractMessages(conversation) {
  * Convert conversation to Obsidian-compatible Markdown
  */
 function conversationToMarkdown(conversation) {
-    const title = conversation.title || 'Untitled Conversation';
+    // Trim title to remove leading/trailing whitespace (including newlines)
+    const title = (conversation.title || 'Untitled Conversation').trim();
     const modelSlug = detectModel(conversation);
     const modelDisplayName = getModelDisplayName(modelSlug);
     const created = formatDate(conversation.create_time);
@@ -346,7 +347,7 @@ function conversationToMarkdown(conversation) {
 
     // Handle project conversations (marked with _projectId and _projectName)
     const projectId = conversation._projectId;
-    const projectName = conversation._projectName;
+    const projectName = conversation._projectName?.trim();
 
     // Build source URL - different format for project conversations
     const sourceUrl = projectId
