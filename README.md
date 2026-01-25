@@ -1,18 +1,21 @@
 # GPT Exporter
 
-Chrome browser extension to easily export either all or only new/updated ChatGPT conversations as Markdown files optimized for [Obsidian](https://obsidian.md/).
+Chrome browser extension to easily export/download either all or only new/updated ChatGPT conversations as **Markdown files** optimized for [Obsidian](https://obsidian.md/). 
 
-Because I couldn't find a tool that does what I want, I built my own. 
+### Obsidian-friendly 
 
-Note:  
+Each file contains frontmatter designed to make it more useful (especially in Obsidian) and also contains a direct link to that conversation in ChatGPT. And if a conversation is part of one of your ChatGPT projects, a corresponding tag in the frontmatter will automatically "link" all conversations of a project together. 
+
+### Deliberately slow download to avoid issues
+
 This extension is deliberately designed to work *slowly* and will also make a random pause between 2 and 4 minutes after downloading every 100 conversations. This is to avoid any potential issues like rate limiting that ChatGPT might implement.  
 As a result, on average it downloads only about 10 conversations per minute. So, if you have 1,500 conversations in total, it could take 2.5 hours to download all. 
 
 During the download process you should NOT open new ChatGPT windows/tabs and should NOT work in existing ChatGPT tabs. Just pause all of your ChatGPT activity until the download is finished. 
 
-<span style="background-color: lightyellow">
-I recommend that you ONLY enable this browser extension for downloading new or updated ChatGPT threads/conversations (or downloading all initially) and then **disable the GPT Exporter extension afterwards**. Because otherwise it will make the loading of ChatGPT pages slower. It will remember all the settings when you re-enable it later. GPT Exporter will also remember which of your ChatGPT conversations were downloaded when. So, if you update any of those chats later (by continuing the conversation there), the updated conversations will be downloaded next time you click 'Export New/Updated' button.
-</span>
+### Only enable for downloading, then disable 
+
+I recommend that you ONLY enable this browser extension for downloading new or updated ChatGPT threads/conversations (or downloading all initially) and then **disable the GPT Exporter extension afterwards**. Because otherwise it will make the loading of ChatGPT pages slower. It will remember all the settings when you re-enable it later. GPT Exporter will also remember which of your ChatGPT conversations were downloaded when. So, if you update any of those chats later (by continuing the conversation there), the updated conversations will be downloaded next time you click "Export New/Updated" button.
 
 During the download process you can open a new browser window and do any non-ChatGPT tasks there. 
 
