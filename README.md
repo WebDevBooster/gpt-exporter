@@ -10,7 +10,9 @@ As a result, on average it downloads only about 10 conversations per minute. So,
 
 During the download process you should NOT open new ChatGPT windows/tabs and should NOT work in existing ChatGPT tabs. Just pause all of your ChatGPT activity until the download is finished. 
 
-Also, I recommend that you ONLY enable this browser extension for dowloading new or updated ChatGPT threads/conversations (or downloading all initially) and then **disable the GPT Exporter extension afterwards**. Because otherwise it will make the loading of ChatGPT pages slower. It will remember all the settings when you re-enable it later. 
+<span style="background-color: lightyellow">
+I recommend that you ONLY enable this browser extension for downloading new or updated ChatGPT threads/conversations (or downloading all initially) and then **disable the GPT Exporter extension afterwards**. Because otherwise it will make the loading of ChatGPT pages slower. It will remember all the settings when you re-enable it later. GPT Exporter will also remember which of your ChatGPT conversations were downloaded when. So, if you update any of those chats later (by continuing the conversation there), the updated conversations will be downloaded next time you click 'Export New/Updated' button.
+</span>
 
 During the download process you can open a new browser window and do any non-ChatGPT tasks there. 
 
