@@ -22,7 +22,8 @@ let exportState = {
     phase: null,
     current: 0,
     total: 0,
-    startTime: null
+    startTime: null,
+    cancelRequested: false
 };
 
 /**
@@ -44,6 +45,27 @@ function updateExportState(phase, current, total) {
  */
 function getExportState() {
     return { ...exportState };
+}
+
+/**
+ * Request cancellation of the current export
+ */
+function cancelExport() {
+    if (!exportState.isRunning) {
+        return { success: false, error: 'No export is currently running' };
+    }
+    exportState.cancelRequested = true;
+    console.log('[BG] Export cancellation requested');
+    return { success: true };
+}
+
+/**
+ * Check if cancellation was requested and throw if so
+ */
+function checkCancellation() {
+    if (exportState.cancelRequested) {
+        throw new Error('Export cancelled by user');
+    }
 }
 
 // Listen for download filename determination to override it
@@ -262,6 +284,9 @@ async function getAllProjectConversationsMeta(projectId, projectName, onProgress
     let totalFetched = 0;
 
     while (true) {
+        // Check for cancellation
+        checkCancellation();
+
         const response = await getProjectConversations(projectId, cursor);
 
         if (response.error) {
@@ -329,6 +354,9 @@ async function getAllConversationsMeta(onProgress = null, fetchLimit = 0) {
         console.log(`[BG] Found ${projectsResponse.items.length} projects`);
 
         for (const project of projectsResponse.items) {
+            // Check for cancellation
+            checkCancellation();
+
             // Check if we've reached the limit
             if (fetchLimit > 0 && allConversations.length >= fetchLimit) {
                 console.log(`[BG] Reached fetch limit of ${fetchLimit}, stopping project fetch`);
@@ -380,6 +408,9 @@ async function getAllConversationsMeta(onProgress = null, fetchLimit = 0) {
     const pageSize = 28;
 
     while (true) {
+        // Check for cancellation
+        checkCancellation();
+
         const response = await getConversationsList(offset, pageSize);
 
         if (response.error) {
@@ -433,6 +464,9 @@ async function getConversations(conversationIds, onProgress = null) {
     console.log(`[BG] Starting to fetch ${totalCount} conversations...`);
 
     for (let i = 0; i < conversationIds.length; i++) {
+        // Check for cancellation
+        checkCancellation();
+
         const conversationNum = i + 1;
         let conversation = null;
         let lastError = null;
@@ -640,6 +674,7 @@ async function exportAll(formats, onProgress, folder = '', limit = 0) {
 
     // Track export state
     exportState.isRunning = true;
+    exportState.cancelRequested = false;
     exportState.startTime = Date.now();
 
     const reportProgress = (phase, current, total) => {
@@ -753,6 +788,7 @@ async function exportNewUpdated(formats, onProgress, folder = '', limit = 0) {
 
     // Track export state
     exportState.isRunning = true;
+    exportState.cancelRequested = false;
     exportState.startTime = Date.now();
 
     const reportProgress = (phase, current, total) => {
@@ -915,6 +951,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 case 'clearHistory':
                     await clearHistory();
                     return { success: true };
+
+                case 'cancelExport':
+                    return cancelExport();
 
                 default:
                     throw new Error(`Unknown action: ${message.action}`);

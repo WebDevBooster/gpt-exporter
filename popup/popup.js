@@ -13,6 +13,7 @@ const formatMarkdown = document.getElementById('formatMarkdown');
 const formatJson = document.getElementById('formatJson');
 const btnExportNew = document.getElementById('btnExportNew');
 const btnExportAll = document.getElementById('btnExportAll');
+const btnCancelProcess = document.getElementById('btnCancelProcess');
 const btnClearHistory = document.getElementById('btnClearHistory');
 const btnClearLog = document.getElementById('btnClearLog');
 const btnPopout = document.getElementById('btnPopout');
@@ -311,6 +312,25 @@ async function handleExport(exportType) {
 }
 
 /**
+ * Handle cancel current process
+ */
+async function handleCancelProcess() {
+    if (!confirm('Cancel the current export process? Progress will be lost.')) {
+        return;
+    }
+
+    const result = await sendMessage({ action: 'cancelExport' });
+    if (result && !result.error) {
+        log('Export cancelled', 'info');
+        hideProgress();
+        btnExportNew.disabled = false;
+        btnExportAll.disabled = false;
+    } else {
+        log(result?.error || 'No export running to cancel', 'info');
+    }
+}
+
+/**
  * Handle clear history
  */
 async function handleClearHistory() {
@@ -338,6 +358,7 @@ exportLimit.addEventListener('change', saveSettings);
 // Event listeners
 btnExportNew.addEventListener('click', () => handleExport('new'));
 btnExportAll.addEventListener('click', () => handleExport('all'));
+btnCancelProcess.addEventListener('click', handleCancelProcess);
 btnClearHistory.addEventListener('click', handleClearHistory);
 btnClearLog.addEventListener('click', clearLog);
 if (btnPopout) {
