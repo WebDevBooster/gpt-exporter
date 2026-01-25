@@ -4,3 +4,4 @@ test-exports/
 
 # IDE
 .idea
+.claude/
