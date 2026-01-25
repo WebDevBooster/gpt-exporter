@@ -763,9 +763,20 @@ async function exportNewUpdated(formats, onProgress, folder = '', limit = 0) {
     try {
         reportProgress('fetching_list', 0, 0);
 
-        // For new/updated export, fetch more than limit since some will be filtered out
-        // Use 3x limit or limit+100 (whichever is larger) to ensure enough candidates
-        const fetchLimit = limit > 0 ? Math.max(limit * 3, limit + 100) : 0;
+        // Determine fetch limit based on export history
+        // If user has never exported, all conversations need export - no buffer needed
+        // If user has history, some will be filtered out - use buffer
+        let fetchLimit = 0;
+        if (limit > 0) {
+            const stats = await getStats();
+            if (stats.totalExported === 0) {
+                // First time export - no filtering will occur, use limit directly
+                fetchLimit = limit;
+            } else {
+                // Has history - some will be filtered, use 3x buffer
+                fetchLimit = Math.max(limit * 3, limit + 100);
+            }
+        }
 
         const allMeta = await getAllConversationsMeta((current, total) => {
             reportProgress('fetching_list', current, total);
