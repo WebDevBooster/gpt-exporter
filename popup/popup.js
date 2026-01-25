@@ -221,6 +221,10 @@ function showProgress(phase, current, total) {
             phaseText = `Creating ZIP archive... ${total} files`;
             percent = 90;
             break;
+        case 'complete':
+            phaseText = `Export complete! ${total} files`;
+            percent = 100;
+            break;
         default:
             phaseText = 'Processing...';
             percent = 50;

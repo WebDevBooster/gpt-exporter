@@ -630,10 +630,30 @@ async function exportAll(formats, onProgress, folder = '', limit = 0) {
 
         reportProgress('fetching_conversations', 0, toExport.length);
 
+        // Build lookup map for project metadata before fetching full conversations
+        const projectLookup = new Map();
+        for (const meta of toExport) {
+            if (meta._projectId) {
+                projectLookup.set(meta.id, {
+                    _projectId: meta._projectId,
+                    _projectName: meta._projectName
+                });
+            }
+        }
+
         const conversationIds = toExport.map(c => c.id);
         const fullConversations = await getConversations(conversationIds, (current, total) => {
             reportProgress('fetching_conversations', current, total);
         });
+
+        // Merge project metadata into full conversations
+        for (const conv of fullConversations) {
+            const projectInfo = projectLookup.get(conv.conversation_id || conv.id);
+            if (projectInfo) {
+                conv._projectId = projectInfo._projectId;
+                conv._projectName = projectInfo._projectName;
+            }
+        }
 
         reportProgress('exporting', 0, fullConversations.length);
 
@@ -661,12 +681,14 @@ async function exportAll(formats, onProgress, folder = '', limit = 0) {
             const zipFilename = `ChatGPT_Export_${today}.zip`;
             await createZipBundle(filesToBundle, zipFilename, folder);
             results.push({ type: 'zip', filename: zipFilename, fileCount: filesToBundle.length });
+            reportProgress('complete', filesToBundle.length, filesToBundle.length);
         } else {
             // Download files individually
             for (const file of filesToBundle) {
                 await downloadFile(file.filename, file.content, file.mimeType, folder);
                 results.push({ type: file.mimeType.includes('markdown') ? 'markdown' : 'json', filename: file.filename });
             }
+            reportProgress('complete', filesToBundle.length, filesToBundle.length);
         }
 
         const exportedData = fullConversations.map(c => ({
@@ -729,10 +751,30 @@ async function exportNewUpdated(formats, onProgress, folder = '', limit = 0) {
 
         reportProgress('fetching_conversations', 0, needExport.length);
 
+        // Build lookup map for project metadata before fetching full conversations
+        const projectLookup = new Map();
+        for (const meta of needExport) {
+            if (meta._projectId) {
+                projectLookup.set(meta.id, {
+                    _projectId: meta._projectId,
+                    _projectName: meta._projectName
+                });
+            }
+        }
+
         const conversationIds = needExport.map(c => c.id);
         const fullConversations = await getConversations(conversationIds, (current, total) => {
             reportProgress('fetching_conversations', current, total);
         });
+
+        // Merge project metadata into full conversations
+        for (const conv of fullConversations) {
+            const projectInfo = projectLookup.get(conv.conversation_id || conv.id);
+            if (projectInfo) {
+                conv._projectId = projectInfo._projectId;
+                conv._projectName = projectInfo._projectName;
+            }
+        }
 
         reportProgress('exporting', 0, fullConversations.length);
 
@@ -760,12 +802,14 @@ async function exportNewUpdated(formats, onProgress, folder = '', limit = 0) {
             const zipFilename = `ChatGPT_Export_${today}.zip`;
             await createZipBundle(filesToBundle, zipFilename, folder);
             results.push({ type: 'zip', filename: zipFilename, fileCount: filesToBundle.length });
+            reportProgress('complete', filesToBundle.length, filesToBundle.length);
         } else {
             // Download files individually
             for (const file of filesToBundle) {
                 await downloadFile(file.filename, file.content, file.mimeType, folder);
                 results.push({ type: file.mimeType.includes('markdown') ? 'markdown' : 'json', filename: file.filename });
             }
+            reportProgress('complete', filesToBundle.length, filesToBundle.length);
         }
 
         const exportedData = fullConversations.map(c => ({
