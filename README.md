@@ -6,6 +6,13 @@ Chrome browser extension to easily export/download either all or only new/update
 
 Each file contains frontmatter designed to make it more useful (especially in Obsidian) and also contains a direct link to that conversation in ChatGPT. And if a conversation is part of one of your ChatGPT projects, a corresponding tag in the frontmatter will automatically "link" all conversations of a project together. 
 
+### Lean but context-rich files
+
+Despite the added frontmatter, the combined size of all `.md` files GPT Exporter downloads tends to be **3-4 times smaller** than the one giant (almost unusable) file the ChatGPT website gives you with their export. Because the GPT Exporter ignores all the useless crap.
+
+This also means:  
+Some of those lean but context-rich Markdown files could also be used for giving context to ChatGPT or other LLMs when you start a new project etc. (Leaner is better because context-window bloat tends to degrade LLM performance.)
+
 ### Deliberately slow download to avoid issues
 
 This extension is deliberately designed to work *slowly* and will also make a random pause between 2 and 4 minutes after downloading every 100 conversations. This is to avoid any potential issues like rate limiting that ChatGPT might implement.  
@@ -28,9 +35,7 @@ If you export no more than 3 conversations, then the export will be separate `.m
 Remember:  
 If you make any changes in one of the downloaded files, all those changes will be overwritten later **IF** you later continue that conversation in ChatGPT and then download that updated chat. Essentially, GPT Exporter creates an extremely usable **backup** of your ChatGPT conversations. Especially when combined with Obsidian. 
 
-The ChatGPT website also gives you an option to download all your conversations. But they bunch it together into one single file and format it in a way that makes the whole thing almost useless. GPT Exporter makes this "backup" super useful. Just the great search functionality of Obsidian makes these downloaded conversations a thousand times more useful than the crappy search you get on the ChatGPT website. 
-
-Plus, despite the added frontmatter, the combined size of all `.md` files GPT Exporter downloads tends to be 3-4 times smaller than the one giant (almost unusable) file the ChatGPT website gives you with their export. (Because the GPT Exporter ignores all the useless crap.)
+The ChatGPT website also gives you an option to download all your conversations. But they bunch it together into one single file and format it in a way that makes the whole thing almost useless. GPT Exporter makes this "backup" super useful. Just the great search functionality of Obsidian makes these downloaded conversations a thousand times more useful than the crappy search you get on the ChatGPT website.
 
 ## Installation 
 
