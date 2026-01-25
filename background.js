@@ -253,9 +253,10 @@ async function getProjectConversations(projectId, cursor = '0') {
 /**
  * Get all conversations from a specific project
  * Uses cursor-based pagination
+ * @param {number} maxItems - Optional limit on number of items to fetch (0 = unlimited)
  */
-async function getAllProjectConversationsMeta(projectId, projectName, onProgress = null) {
-    console.log(`[BG] Fetching conversations for project: ${projectName}`);
+async function getAllProjectConversationsMeta(projectId, projectName, onProgress = null, maxItems = 0) {
+    console.log(`[BG] Fetching conversations for project: ${projectName}${maxItems > 0 ? ` (max ${maxItems})` : ''}`);
     const conversations = [];
     let cursor = '0';
     let totalFetched = 0;
@@ -289,6 +290,12 @@ async function getAllProjectConversationsMeta(projectId, projectName, onProgress
             onProgress(conversations.length, response.total || conversations.length);
         }
 
+        // Check if we've reached the limit
+        if (maxItems > 0 && conversations.length >= maxItems) {
+            console.log(`[BG] Reached limit of ${maxItems} for project "${projectName}"`);
+            break;
+        }
+
         // Check if there's a next page
         if (!response.cursor) {
             console.log(`[BG] No more pages for project "${projectName}"`);
@@ -307,9 +314,11 @@ async function getAllProjectConversationsMeta(projectId, projectName, onProgress
 /**
  * Get all conversation metadata (including from projects)
  * Projects are fetched FIRST because they tend to be more important
+ * @param {function} onProgress - Progress callback
+ * @param {number} fetchLimit - Optional limit on total items to fetch (0 = unlimited)
  */
-async function getAllConversationsMeta(onProgress = null) {
-    console.log('[BG] getAllConversationsMeta starting...');
+async function getAllConversationsMeta(onProgress = null, fetchLimit = 0) {
+    console.log(`[BG] getAllConversationsMeta starting...${fetchLimit > 0 ? ` (limit: ${fetchLimit})` : ''}`);
     const allConversations = [];
 
     // FIRST: Fetch projects and their conversations (higher priority)
@@ -320,6 +329,12 @@ async function getAllConversationsMeta(onProgress = null) {
         console.log(`[BG] Found ${projectsResponse.items.length} projects`);
 
         for (const project of projectsResponse.items) {
+            // Check if we've reached the limit
+            if (fetchLimit > 0 && allConversations.length >= fetchLimit) {
+                console.log(`[BG] Reached fetch limit of ${fetchLimit}, stopping project fetch`);
+                break;
+            }
+
             const projectId = project.gizmo?.id || project.id;
             const projectName = project.gizmo?.display?.name || project.display?.name || projectId;
 
@@ -327,6 +342,9 @@ async function getAllConversationsMeta(onProgress = null) {
 
             // Random delay 2-4 seconds between project fetches
             await sleep(randomDelay(2000, 4000));
+
+            // Calculate remaining items we can fetch
+            const remainingLimit = fetchLimit > 0 ? fetchLimit - allConversations.length : 0;
 
             const projectConversations = await getAllProjectConversationsMeta(
                 projectId,
@@ -336,7 +354,8 @@ async function getAllConversationsMeta(onProgress = null) {
                         // Report progress as we fetch project conversations
                         onProgress(allConversations.length + current, allConversations.length + current);
                     }
-                }
+                },
+                remainingLimit
             );
 
             if (projectConversations.length > 0) {
@@ -348,14 +367,20 @@ async function getAllConversationsMeta(onProgress = null) {
         console.log('[BG] No projects found or projects API not available');
     }
 
+    // Check if we've already reached the limit from projects
+    if (fetchLimit > 0 && allConversations.length >= fetchLimit) {
+        console.log(`[BG] Reached fetch limit of ${fetchLimit} from projects alone`);
+        console.log(`[BG] Total conversations (projects only): ${allConversations.length}`);
+        return allConversations;
+    }
 
     // SECOND: Get main/regular conversations
     console.log('[BG] Now fetching main/regular conversations...');
     let offset = 0;
-    const limit = 28;
+    const pageSize = 28;
 
     while (true) {
-        const response = await getConversationsList(offset, limit);
+        const response = await getConversationsList(offset, pageSize);
 
         if (response.error) {
             throw new Error(response.error);
@@ -374,7 +399,13 @@ async function getAllConversationsMeta(onProgress = null) {
             onProgress(allConversations.length, allConversations.length);
         }
 
-        offset += limit;
+        // Check if we've reached the limit
+        if (fetchLimit > 0 && allConversations.length >= fetchLimit) {
+            console.log(`[BG] Reached fetch limit of ${fetchLimit}, stopping main conversation fetch`);
+            break;
+        }
+
+        offset += pageSize;
         // Random delay 2-4 seconds between list pages
         await sleep(randomDelay(2000, 4000));
     }
@@ -619,9 +650,10 @@ async function exportAll(formats, onProgress, folder = '', limit = 0) {
     try {
         reportProgress('fetching_list', 0, 0);
 
+        // Pass limit to avoid fetching more metadata than needed
         const allMeta = await getAllConversationsMeta((current, total) => {
             reportProgress('fetching_list', current, total);
-        });
+        }, limit);
 
         let toExport = allMeta;
         if (limit > 0 && limit < allMeta.length) {
@@ -731,9 +763,13 @@ async function exportNewUpdated(formats, onProgress, folder = '', limit = 0) {
     try {
         reportProgress('fetching_list', 0, 0);
 
+        // For new/updated export, fetch more than limit since some will be filtered out
+        // Use 3x limit or limit+100 (whichever is larger) to ensure enough candidates
+        const fetchLimit = limit > 0 ? Math.max(limit * 3, limit + 100) : 0;
+
         const allMeta = await getAllConversationsMeta((current, total) => {
             reportProgress('fetching_list', current, total);
-        });
+        }, fetchLimit);
 
         let needExport = await filterNeedingExport(allMeta);
 
