@@ -554,12 +554,23 @@ function conversationToMarkdown(conversation) {
     // Get chronum from create_time
     const chronum = getChronum(conversation.create_time);
 
+    // Extract branching info for parent property
+    const branchingInfo = extractBranchingInfo(conversation);
+
+    // Build parent property - empty list item if no parent, or internal link if parent exists
+    let parentProperty = 'parent:\n  - ';
+    if (branchingInfo) {
+        const parentFilename = generateFilename(branchingInfo.parentTitle, branchingInfo.parentId);
+        parentProperty = `parent:\n  - "[[${parentFilename}]]"`;
+    }
+
     // Build YAML frontmatter (new format per spec)
     // Property order: title, aliases, parent, type, model-name, chronum, created, updated, tags, project, source
     const frontmatterLines = [
         '---',
         `title: "${title.replace(/"/g, '\\"')}"`,
         'aliases: ',
+        parentProperty,
         'type: gpt-chat',
         `model-name: ${modelSlug}`,
         `chronum: ${chronum}`,

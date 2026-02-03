@@ -716,6 +716,66 @@ async function runHelperTests() {
         assertEqual(actualFilenameBase, expectedParentLink,
             'Parent link and actual filename should be identical');
     });
+
+    // Feature #17: Parent property shows empty list item when no parent exists
+    await test('parent property shows empty list item when no parent exists', () => {
+        const conversation = {
+            title: 'Unusual Adjective',
+            create_time: 1770126827.760625,
+            update_time: 1770126833.018922,
+            conversation_id: '6981fddd-2834-8394-9b08-a9b19891753c',
+            mapping: {}  // No branching info
+        };
+
+        const result = conversationToMarkdown(conversation);
+        const content = result.content;
+
+        // Should have parent property with empty list item
+        assert(content.includes('parent:\n  - '), 'Should have parent property with empty list item');
+        // Should NOT have any internal link
+        assert(!content.includes('parent:\n  - "[['), 'Should NOT have a parent link when no parent exists');
+    });
+
+    await test('parent property format matches expected: parent: newline followed by space-space-hyphen-space', () => {
+        const conversation = {
+            title: 'Test',
+            create_time: 1770126827,
+            update_time: 1770126827,
+            conversation_id: '6981fddd-2834-8394-9b08-a9b19891753c',
+            mapping: {}
+        };
+
+        const result = conversationToMarkdown(conversation);
+        const content = result.content;
+
+        // Verify the exact format: 'parent:' followed by newline, then '  - ' (two spaces, hyphen, space)
+        const parentMatch = content.match(/parent:\n {2}- /);
+        assert(parentMatch, 'Parent property should have exact YAML list format');
+    });
+
+    await test('parent property appears after aliases in frontmatter', () => {
+        const conversation = {
+            title: 'Test',
+            create_time: 1770126827,
+            update_time: 1770126827,
+            conversation_id: '6981fddd-2834-8394-9b08-a9b19891753c',
+            mapping: {}
+        };
+
+        const result = conversationToMarkdown(conversation);
+        const content = result.content;
+
+        const aliasesIndex = content.indexOf('aliases:');
+        const parentIndex = content.indexOf('parent:');
+        const typeIndex = content.indexOf('type:');
+
+        assert(aliasesIndex > 0, 'aliases should be in frontmatter');
+        assert(parentIndex > 0, 'parent should be in frontmatter');
+        assert(typeIndex > 0, 'type should be in frontmatter');
+
+        assert(parentIndex > aliasesIndex, 'parent should come after aliases');
+        assert(parentIndex < typeIndex, 'parent should come before type');
+    });
 }
 
 /**
