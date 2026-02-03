@@ -139,6 +139,26 @@ function extractBranchingInfo(conversation) {
 }
 
 /**
+ * Generate filename from title and conversation_id
+ * This function is used for BOTH actual file output AND parent internal links
+ * to ensure consistency and that Obsidian links resolve correctly.
+ *
+ * @param {string} title - The conversation title
+ * @param {string} conversationId - The full conversation ID
+ * @returns {string} Filename without extension (e.g., "Diacritics_and_Accents_698065a8")
+ */
+function generateFilename(title, conversationId) {
+    const sanitized = sanitizeFilename(title);
+    const shortId = getShortConversationId(conversationId);
+
+    if (!shortId) {
+        return sanitized;
+    }
+
+    return `${sanitized}_${shortId}`;
+}
+
+/**
  * Extract 10-digit integer from create_time timestamp
  * The create_time is a Unix timestamp in seconds with decimal places
  *
