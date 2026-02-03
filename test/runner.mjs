@@ -589,6 +589,45 @@ async function runHelperTests() {
         assert(chronumIndex > modelNameIndex, 'chronum should come after model-name');
         assert(chronumIndex < createdIndex, 'chronum should come before created');
     });
+
+    // Feature #16: extractBranchingInfo tests
+    await test('extractBranchingInfo finds branching metadata in conversation mapping', () => {
+        // Load branching conversations from test data
+        const testFile = join(projectRoot, 'test-exports-and-logs', '4-branching-conversations_for_mock_API.json');
+        const conversations = loadUTF16LEJson(testFile);
+
+        // Find a conversation WITH branching info (conversation index 3 = "Branch · Diacritics and Accents")
+        const branchConv = conversations.find(c => c.conversation_id === '6981255a-0c54-8393-9176-98d226ea8c0c');
+        assert(branchConv, 'Should find the branch conversation');
+
+        const result = extractBranchingInfo(branchConv);
+        assert(result !== null, 'Should find branching info');
+        assertEqual(result.parentId, '698065a8-9160-8392-a810-0ae50700979b', 'Should extract correct parent ID');
+        assertEqual(result.parentTitle, 'Diacritics and Accents', 'Should extract correct parent title');
+    });
+
+    await test('extractBranchingInfo returns null for conversation without parent', () => {
+        // Load branching conversations from test data
+        const testFile = join(projectRoot, 'test-exports-and-logs', '4-branching-conversations_for_mock_API.json');
+        const conversations = loadUTF16LEJson(testFile);
+
+        // Find the root conversation (no branching info) - "Diacritics and Accents"
+        const rootConv = conversations.find(c => c.conversation_id === '698065a8-9160-8392-a810-0ae50700979b');
+        assert(rootConv, 'Should find the root conversation');
+
+        const result = extractBranchingInfo(rootConv);
+        assertEqual(result, null, 'Should return null for conversation without branching info');
+    });
+
+    await test('extractBranchingInfo returns null for null conversation', () => {
+        const result = extractBranchingInfo(null);
+        assertEqual(result, null, 'Should return null for null input');
+    });
+
+    await test('extractBranchingInfo returns null for conversation without mapping', () => {
+        const result = extractBranchingInfo({ title: 'Test', conversation_id: '123' });
+        assertEqual(result, null, 'Should return null when mapping is missing');
+    });
 }
 
 /**
