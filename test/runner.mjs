@@ -1337,6 +1337,87 @@ async function runHelperTests() {
             'Project tag should match expected sanitized format from test-vault');
     });
 
+    // Feature #30: Non-project conversations have only gpt-chat tag
+    await test('Feature #30: non-project conversation has only gpt-chat tag', () => {
+        const conversation = {
+            title: 'Test Conversation Without Project',
+            create_time: 1770126827.760625,
+            update_time: 1770126833.018922,
+            conversation_id: '6981fddd-2834-8394-9b08-a9b19891753c',
+            // No _projectId or _projectName - this is a non-project conversation
+            mapping: {}
+        };
+
+        const result = conversationToMarkdown(conversation);
+        const content = result.content;
+
+        // Verify the exact tags format: only gpt-chat
+        const expectedTagsFormat = 'tags:\n  - gpt-chat\n';
+        assert(content.includes(expectedTagsFormat),
+            'Non-project conversation should have tags:\\n  - gpt-chat');
+    });
+
+    await test('Feature #30: verify only one tag item for non-project conversation', () => {
+        const conversation = {
+            title: 'Simple Chat',
+            create_time: 1770126827.760625,
+            update_time: 1770126833.018922,
+            conversation_id: 'abc12345-1234-5678-9abc-def123456789',
+            mapping: {}
+        };
+
+        const result = conversationToMarkdown(conversation);
+        const content = result.content;
+
+        // Count the number of "  - " occurrences within the tags block
+        const tagsSection = content.split('tags:')[1].split(/\n(?!  )/)[0];
+        const tagCount = (tagsSection.match(/  - /g) || []).length;
+
+        assertEqual(tagCount, 1, 'Non-project conversation should have exactly 1 tag');
+    });
+
+    await test('Feature #30: _projectName empty string treated as no project', () => {
+        const conversation = {
+            title: 'Test Conversation',
+            create_time: 1770126827.760625,
+            update_time: 1770126833.018922,
+            conversation_id: '6981fddd-2834-8394-9b08-a9b19891753c',
+            _projectId: 'g-p-123456',
+            _projectName: '',  // Empty string should be treated as no project
+            mapping: {}
+        };
+
+        const result = conversationToMarkdown(conversation);
+        const content = result.content;
+
+        // Should only have gpt-chat tag when project name is empty
+        const tagsSection = content.split('tags:')[1].split(/\n(?!  )/)[0];
+        const tagCount = (tagsSection.match(/  - /g) || []).length;
+
+        assertEqual(tagCount, 1, 'Empty project name should result in only gpt-chat tag');
+    });
+
+    await test('Feature #30: _projectName whitespace only treated as no project', () => {
+        const conversation = {
+            title: 'Test Conversation',
+            create_time: 1770126827.760625,
+            update_time: 1770126833.018922,
+            conversation_id: '6981fddd-2834-8394-9b08-a9b19891753c',
+            _projectId: 'g-p-123456',
+            _projectName: '   ',  // Whitespace only should be trimmed to empty
+            mapping: {}
+        };
+
+        const result = conversationToMarkdown(conversation);
+        const content = result.content;
+
+        // Should only have gpt-chat tag when project name is whitespace
+        const tagsSection = content.split('tags:')[1].split(/\n(?!  )/)[0];
+        const tagCount = (tagsSection.match(/  - /g) || []).length;
+
+        assertEqual(tagCount, 1, 'Whitespace-only project name should result in only gpt-chat tag');
+    });
+
     // Feature #31: model property is removed from frontmatter (only model-name remains)
     await test('Feature #31: model property is NOT in frontmatter', () => {
         const conversation = {
