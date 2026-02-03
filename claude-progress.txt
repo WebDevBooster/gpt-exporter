@@ -767,12 +767,143 @@
 
 ---
 
+## Session 15 (Agent for Feature #36) - 2026-02-03
+
+### Feature Completed This Session: 1
+
+#### Feature #36: Aliases items need to be wrapped in double quotes
+- Status: PASSED
+- Modified `aliasesProperty` in `conversationToMarkdown()` to wrap each alias in double quotes
+- Changed from:
+  ```yaml
+  aliases:
+    - 6981fddd
+    - Unusual Adjective 6981fddd
+  ```
+  To:
+  ```yaml
+  aliases:
+    - "6981fddd"
+    - "Unusual Adjective 6981fddd"
+  ```
+- This ensures Obsidian treats numeric-looking IDs (e.g., "69818630") as strings, not numbers
+- Updated all existing alias tests to expect quoted format
+- Added 5 new Feature #36 specific tests:
+  1. First alias (8-char ID) is wrapped in double quotes
+  2. Second alias (title + ID) is wrapped in double quotes
+  3. Aliases with numeric-looking ID are treated as strings by Obsidian
+  4. Aliases format matches Feature description example
+  5. Test-vault files have double-quoted aliases
+- Updated test-vault expected files to have double-quoted aliases
+
+### Current Progress
+- **Passing: 36/36 features (100%)** 🎉
+- All features complete!
+
+### Test Results
+- All 119 tests passing (+5 new Feature #36 tests)
+- Infrastructure tests: ✓ (3 tests)
+- Helper function tests: ✓ (111 tests)
+- Integration tests: ✓ (5 tests)
+
+### Files Modified
+- export/markdown.js: Updated aliasesProperty to wrap aliases in double quotes
+- test/runner.mjs: Updated 10 existing alias tests + added 5 new Feature #36 tests
+- test-vault/*.md: Updated expected files with double-quoted aliases
+
+### Git Commits Made This Session
+1. 47dfef2: feat: wrap aliases in double quotes (Feature #36)
+
+### Technical Notes
+- The double-quote wrapping is important because 8-char hex IDs like "69818630" could be
+  interpreted as integers by YAML parsers, but Obsidian aliases should always be strings
+- The change was minimal (2 lines in markdown.js) but required updating many test expectations
+- All integration tests (Features #33-35) continue to pass with the new format
+
+---
+
+## Session 16 (Agent for Feature #37) - 2026-02-03
+
+### Feature Completed This Session: 1
+
+#### Feature #37: Callouts for user questions
+- Status: PASSED
+- NEW FEATURE: Format user questions in markdown files as Obsidian callouts
+- Implementation:
+  1. Added `formatUserContentAsCallout()` helper function in export/markdown.js
+     - Prefixes each line with `> ` (angle bracket + space)
+     - Does NOT prefix lines inside code fences (```...```)
+     - Handles inline code normally (no special treatment)
+     - Nested blockquotes in user content get double prefix `> > `
+  2. Modified `conversationToMarkdown()` to use new format:
+     - User messages: `> [!me:]` header + callout-formatted content
+     - Assistant messages: Still use `#### ChatGPT:` format (unchanged)
+- Updated test-vault expected files with callout format:
+  - Unusual_Adjective_6981fddd.md
+  - Diacritics_and_Accents_698065a8.md
+  - Branch_·_Diacritics_and_Accents_6981255a.md
+
+### Example Output Format
+Before (old format):
+```markdown
+#### You:
+What do you call those things that create characters like:
+ä, ö, ü, à, ̣a, á and all the other non-standard characters?
+```
+
+After (new callout format):
+```markdown
+> [!me:]
+> What do you call those things that create characters like:
+> ä, ö, ü, à, ̣a, á and all the other non-standard characters?
+```
+
+### Code Fence Handling
+Code fences are NOT prefixed with `> `:
+```markdown
+> [!me:]
+> This is text before code
+```
+<!DOCTYPE html>
+<html>
+</html>
+```
+> This is text after code
+```
+
+### Current Progress
+- **Passing: 37/37 features (100%)** 🎉
+- All features complete (including new Feature #37)
+
+### Test Results
+- All 133 tests passing (+14 new Feature #37 tests)
+- Infrastructure tests: ✓ (3 tests)
+- Helper function tests: ✓ (125 tests)
+- Integration tests: ✓ (5 tests)
+
+### Files Modified
+- export/markdown.js: Added formatUserContentAsCallout(), modified conversationToMarkdown()
+- test/runner.mjs: Added 14 new Feature #37 tests, imported formatUserContentAsCallout
+- test/verify-feature-37.mjs: Created verification script
+- test-vault/*.md: Updated expected files with callout format (gitignored)
+
+### Git Commits Made This Session
+1. feat: implement callouts for user questions (Feature #37)
+
+### Technical Notes
+- `formatUserContentAsCallout()` tracks code fence state to know when to skip prefixing
+- Code fence markers (```) and their content are not prefixed
+- Empty lines become `> ` (just angle bracket + space)
+- Obsidian will render these as collapsible callout blocks with the [!me:] type
+
+---
+
 ## PROJECT COMPLETE 🎉
 
 ### Final Summary
-- **Total Features:** 35
-- **Passing Features:** 35 (100%)
-- **Total Tests:** 114
+- **Total Features:** 37
+- **Passing Features:** 37 (100%)
+- **Total Tests:** 133
 
 ### Modifications Implemented
 1. ✓ chronum property added to frontmatter (from create_time)
@@ -780,13 +911,16 @@
 3. ✓ Sanitized project tags (lowercase, letters/numbers/hyphens only)
 4. ✓ Parent property with Obsidian internal links
 5. ✓ Unique ID suffix on filenames (8-char conversation ID)
-6. ✓ Aliases with ID and title+ID
+6. ✓ Aliases with ID and title+ID (wrapped in double quotes)
 7. ✓ Tags in YAML list format with project tag
 8. ✓ model property removed, model-name retained
+9. ✓ User questions formatted as Obsidian callouts (NEW)
 
 ### Key Technical Achievements
 - UTF-16LE JSON file handling with proper BOM detection
 - Encoding normalization for corrupted middle dot characters
 - Consistent filename generation for files and parent links
+- Double-quoted aliases to ensure YAML string interpretation
+- Callout formatting for user questions with code fence awareness
 - Comprehensive test suite with unit, helper, and integration tests
 - All output verified against expected test-vault files
