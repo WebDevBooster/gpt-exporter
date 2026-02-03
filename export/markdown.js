@@ -12,8 +12,13 @@
 function sanitizeFilename(title) {
     if (!title) return 'Untitled_Conversation';
 
+    // Normalize encoding issues from UTF-16LE JSON files
+    // The box-drawing characters ┬╖ (U+252C U+2556) appear when a middle dot (·)
+    // gets corrupted during UTF-8 to UTF-16LE conversion in the ChatGPT export
+    let filename = title.replace(/\u252C\u2556/g, '\u00B7');
+
     // Replace spaces with underscores
-    let filename = title.replace(/\s+/g, '_');
+    filename = filename.replace(/\s+/g, '_');
 
     // Replace invalid filename characters with underscores
     // Invalid chars on Windows: \ / : * ? " < > |
