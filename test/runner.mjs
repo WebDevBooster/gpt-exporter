@@ -366,6 +366,25 @@ async function runHelperTests() {
         assert(!content.includes('created: 2026-02-03T13:53:47'), 'created should NOT include seconds');
     });
 
+    // Feature #9: updated timestamp uses truncated format
+    await test('updated timestamp uses truncated format in frontmatter', () => {
+        const conversation = {
+            title: 'Test Conversation',
+            create_time: 1770126827.760625,
+            update_time: 1770126833.018922,
+            conversation_id: '6981fddd-2834-8394-9b08-a9b19891753c',
+            mapping: {}
+        };
+
+        const result = conversationToMarkdown(conversation);
+        const content = result.content;
+
+        // Check that updated uses truncated format (no seconds, no Z)
+        assert(content.includes('updated: 2026-02-03T13:53'), 'updated should use truncated format: 2026-02-03T13:53');
+        assert(!content.match(/updated: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/), 'updated should NOT have seconds');
+        assert(!content.includes('updated: 2026-02-03T13:53:53'), 'updated should NOT include seconds');
+    });
+
     await test('formatTruncatedDate handles zero timestamp', () => {
         const result = formatTruncatedDate(0);
         // 0 is falsy, should return current time (not 1970-01-01)
