@@ -584,9 +584,11 @@ function conversationToMarkdown(conversation) {
     // Build aliases property (Modification #6)
     // First alias: 8-character conversation ID
     // Second alias: title + space + 8-character ID
+    // Each alias is wrapped in double quotes to ensure Obsidian treats them as strings
+    // (important when the first alias is just 8 hex digits, which could be interpreted as a number)
     const shortId = getShortConversationId(conversationId);
     const aliasesProperty = shortId
-        ? `aliases:\n  - ${shortId}\n  - ${title} ${shortId}`
+        ? `aliases:\n  - "${shortId}"\n  - "${title} ${shortId}"`
         : 'aliases:\n  - ';
 
     // Build tags property in YAML list format

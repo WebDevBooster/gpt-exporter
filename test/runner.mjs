@@ -899,9 +899,9 @@ async function runHelperTests() {
         const result = conversationToMarkdown(conversation);
         const content = result.content;
 
-        // Verify aliases property has the 8-char ID as first item
-        assert(content.includes('aliases:\n  - 6981fddd'),
-            'First alias should be the 8-character conversation ID');
+        // Verify aliases property has the 8-char ID as first item (wrapped in double quotes)
+        assert(content.includes('aliases:\n  - "6981fddd"'),
+            'First alias should be the 8-character conversation ID wrapped in double quotes');
     });
 
     await test('aliases format is YAML list with ID as first item', () => {
@@ -916,9 +916,9 @@ async function runHelperTests() {
         const result = conversationToMarkdown(conversation);
         const content = result.content;
 
-        // Verify the exact YAML format: aliases:\n  - <shortId>
-        const aliasMatch = content.match(/aliases:\n\s+- ([a-f0-9]{8})\n/);
-        assert(aliasMatch, 'Aliases should be in YAML list format with 8-char ID');
+        // Verify the exact YAML format: aliases:\n  - "<shortId>" (with double quotes)
+        const aliasMatch = content.match(/aliases:\n\s+- "([a-f0-9]{8})"\n/);
+        assert(aliasMatch, 'Aliases should be in YAML list format with 8-char ID wrapped in double quotes');
         assertEqual(aliasMatch[1], '698065a8', 'First alias should be the 8-char ID');
     });
 
@@ -955,8 +955,8 @@ async function runHelperTests() {
         const content = result.content;
 
         // The conversation_id is 6981fddd-2834-8394-9b08-a9b19891753c
-        assert(content.includes('aliases:\n  - 6981fddd'),
-            'First alias should be 6981fddd (first 8 chars of conversation_id)');
+        assert(content.includes('aliases:\n  - "6981fddd"'),
+            'First alias should be "6981fddd" (first 8 chars of conversation_id, wrapped in double quotes)');
     });
 
     // Feature #26: Aliases include title + space + ID as second item
@@ -972,9 +972,9 @@ async function runHelperTests() {
         const result = conversationToMarkdown(conversation);
         const content = result.content;
 
-        // Second alias should be "title space 8-char-ID"
-        assert(content.includes('  - Unusual Adjective 6981fddd'),
-            'Second alias should be title + space + 8-char ID: "Unusual Adjective 6981fddd"');
+        // Second alias should be "title space 8-char-ID" wrapped in double quotes
+        assert(content.includes('  - "Unusual Adjective 6981fddd"'),
+            'Second alias should be title + space + 8-char ID wrapped in double quotes');
     });
 
     await test('second alias preserves original title (not sanitized)', () => {
@@ -989,9 +989,9 @@ async function runHelperTests() {
         const result = conversationToMarkdown(conversation);
         const content = result.content;
 
-        // Second alias should preserve the original title with special characters
-        assert(content.includes('  - Test & Special Characters! 698065a8'),
-            'Second alias should preserve original title: "Test & Special Characters! 698065a8"');
+        // Second alias should preserve the original title with special characters, wrapped in double quotes
+        assert(content.includes('  - "Test & Special Characters! 698065a8"'),
+            'Second alias should preserve original title, wrapped in double quotes');
     });
 
     await test('aliases YAML format matches spec example', () => {
@@ -1006,13 +1006,13 @@ async function runHelperTests() {
         const result = conversationToMarkdown(conversation);
         const content = result.content;
 
-        // Verify exact format matches spec:
+        // Verify exact format matches spec (with double quotes):
         // aliases:
-        //   - 6981fddd
-        //   - Unusual Adjective 6981fddd
-        const expectedFormat = 'aliases:\n  - 6981fddd\n  - Unusual Adjective 6981fddd';
+        //   - "6981fddd"
+        //   - "Unusual Adjective 6981fddd"
+        const expectedFormat = 'aliases:\n  - "6981fddd"\n  - "Unusual Adjective 6981fddd"';
         assert(content.includes(expectedFormat),
-            'Aliases format should match spec exactly with ID first, then title+ID');
+            'Aliases format should match spec exactly with ID first, then title+ID, both in double quotes');
     });
 
     await test('aliases with real branching conversation data', () => {
@@ -1026,13 +1026,13 @@ async function runHelperTests() {
         const result = conversationToMarkdown(branchConv);
         const content = result.content;
 
-        // Verify both aliases are present
-        assert(content.includes('  - 6981255a'), 'First alias should be 8-char ID');
+        // Verify both aliases are present (wrapped in double quotes)
+        assert(content.includes('  - "6981255a"'), 'First alias should be 8-char ID wrapped in double quotes');
         // The title is normalized (UTF-16LE encoding issues fixed)
         // Raw title has ┬╖ (U+252C U+2556), but output has · (U+00B7)
         const normalizedTitle = 'Branch · Diacritics and Accents';  // Expected normalized title
-        assert(content.includes(`  - ${normalizedTitle} 6981255a`),
-            `Second alias should be "${normalizedTitle} 6981255a"`);
+        assert(content.includes(`  - "${normalizedTitle} 6981255a"`),
+            `Second alias should be "${normalizedTitle} 6981255a" wrapped in double quotes`);
     });
 
     // Feature #27: Aliases appear in correct YAML list format
@@ -1097,9 +1097,10 @@ async function runHelperTests() {
         const content = result.content;
 
         // Expected aliases format from test-vault/Tëster's_Pläýground_for_&#!,;$£_Frieñd̄žß/Unusual_Adjective_6981fddd.md
-        const expectedAliasesFormat = 'aliases:\n  - 6981fddd\n  - Unusual Adjective 6981fddd\n';
+        // Each alias is wrapped in double quotes to ensure Obsidian treats them as strings
+        const expectedAliasesFormat = 'aliases:\n  - "6981fddd"\n  - "Unusual Adjective 6981fddd"\n';
         assert(content.includes(expectedAliasesFormat),
-            'Aliases format should match expected test-vault output exactly');
+            'Aliases format should match expected test-vault output exactly (with double quotes)');
     });
 
     await test('Feature #27: aliases format matches expected test-vault output - Diacritics and Accents', () => {
@@ -1114,10 +1115,10 @@ async function runHelperTests() {
         const result = conversationToMarkdown(conv);
         const content = result.content;
 
-        // Expected aliases format from test-vault
-        const expectedAliasesFormat = 'aliases:\n  - 698065a8\n  - Diacritics and Accents 698065a8\n';
+        // Expected aliases format from test-vault (with double quotes)
+        const expectedAliasesFormat = 'aliases:\n  - "698065a8"\n  - "Diacritics and Accents 698065a8"\n';
         assert(content.includes(expectedAliasesFormat),
-            'Aliases format should match expected test-vault output for Diacritics and Accents');
+            'Aliases format should match expected test-vault output for Diacritics and Accents (with double quotes)');
     });
 
     await test('Feature #27: aliases format matches expected test-vault output - Branch conversation', () => {
@@ -1133,11 +1134,98 @@ async function runHelperTests() {
         const content = result.content;
 
         // The title may have encoding variations, so we check for the pattern
-        // Expected: aliases:\n  - 6981255a\n  - <title> 6981255a
-        assert(content.includes('aliases:\n  - 6981255a\n  - '),
-            'Aliases should have ID as first item');
-        assert(content.includes(' 6981255a\nparent:'),
-            'Second alias should end with ID followed by parent property');
+        // Expected: aliases:\n  - "6981255a"\n  - "<title> 6981255a" (with double quotes)
+        assert(content.includes('aliases:\n  - "6981255a"\n  - "'),
+            'Aliases should have ID as first item wrapped in double quotes');
+        assert(content.includes(' 6981255a"\nparent:'),
+            'Second alias should end with ID and closing quote followed by parent property');
+    });
+
+    // Feature #36: Aliases items need to be wrapped in double quotes
+    await test('Feature #36: first alias (8-char ID) is wrapped in double quotes', () => {
+        const conversation = {
+            title: 'Test Conversation',
+            create_time: 1770126827.760625,
+            update_time: 1770126833.018922,
+            conversation_id: '69818630-1234-5678-9abc-def012345678',
+            mapping: {}
+        };
+
+        const result = conversationToMarkdown(conversation);
+        const content = result.content;
+
+        // The 8-char ID "69818630" looks like a number - must be quoted to ensure Obsidian treats as string
+        assert(content.includes('  - "69818630"'), 'First alias must be wrapped in double quotes');
+        assert(!content.match(/aliases:\n\s+- 69818630[^"]/), 'First alias should NOT be unquoted');
+    });
+
+    await test('Feature #36: second alias (title + ID) is wrapped in double quotes', () => {
+        const conversation = {
+            title: 'Conversation ID Generation',
+            create_time: 1770126827.760625,
+            update_time: 1770126833.018922,
+            conversation_id: '69818630-1234-5678-9abc-def012345678',
+            mapping: {}
+        };
+
+        const result = conversationToMarkdown(conversation);
+        const content = result.content;
+
+        // Second alias should also be quoted
+        assert(content.includes('  - "Conversation ID Generation 69818630"'),
+            'Second alias must be wrapped in double quotes');
+    });
+
+    await test('Feature #36: aliases with numeric-looking ID are treated as strings by Obsidian', () => {
+        // This test verifies the feature requirement:
+        // IDs like "69818630" could be interpreted as integers by YAML parsers
+        // Wrapping in quotes ensures they're treated as strings
+        const conversation = {
+            title: 'Test',
+            create_time: 1770126827.760625,
+            update_time: 1770126833.018922,
+            conversation_id: '12345678-0000-0000-0000-000000000000',  // Looks very numeric!
+            mapping: {}
+        };
+
+        const result = conversationToMarkdown(conversation);
+        const content = result.content;
+
+        // Both aliases must be quoted to prevent YAML number parsing
+        assert(content.includes('  - "12345678"'), 'Numeric-looking ID must be quoted');
+        assert(content.includes('  - "Test 12345678"'), 'Second alias with numeric-looking ID must be quoted');
+    });
+
+    await test('Feature #36: aliases format matches Feature description example', () => {
+        // The feature description shows this exact format:
+        // aliases:
+        //   - "69818630"
+        //   - "Conversation ID Generation 69818630"
+        const conversation = {
+            title: 'Conversation ID Generation',
+            create_time: 1770126827.760625,
+            update_time: 1770126833.018922,
+            conversation_id: '69818630-1234-5678-9abc-def012345678',
+            mapping: {}
+        };
+
+        const result = conversationToMarkdown(conversation);
+        const content = result.content;
+
+        const expectedFormat = 'aliases:\n  - "69818630"\n  - "Conversation ID Generation 69818630"';
+        assert(content.includes(expectedFormat),
+            'Aliases format should match Feature #36 description example exactly');
+    });
+
+    await test('Feature #36: test-vault files have double-quoted aliases', () => {
+        const testFile = join(projectRoot, 'test-vault', "Tëster's_Pläýground_for_&#!,;$£_Frieñd̄žß", 'Unusual_Adjective_6981fddd.md');
+        const expectedContent = readFileSync(testFile, 'utf8');
+
+        // Verify the test-vault expected files have the double quotes
+        assert(expectedContent.includes('  - "6981fddd"'),
+            'Test-vault file should have first alias in double quotes');
+        assert(expectedContent.includes('  - "Unusual Adjective 6981fddd"'),
+            'Test-vault file should have second alias in double quotes');
     });
 
     // Feature #28: Tags use YAML list format instead of inline
