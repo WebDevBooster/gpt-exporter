@@ -579,3 +579,57 @@
 - Uses template literal with explicit newlines and two-space indentation
 - Format: `aliases:\n  - ${shortId}\n  - ${title} ${shortId}`
 - This ensures Obsidian recognizes the aliases correctly
+
+---
+
+## Session 13 (Agent Batch #31-32) - 2026-02-03
+
+### Features Completed This Session: 2
+
+#### Feature #31: model property is removed from frontmatter
+- Status: PASSED
+- Verified that `model:` property (display name like 'GPT-4') is NOT in frontmatter
+- Only `model-name:` property (slug like 'gpt-4') is present
+- Added 4 tests:
+  - `Feature #31: model property is NOT in frontmatter`
+  - `Feature #31: model-name property IS in frontmatter`
+  - `Feature #31: test-vault files have model-name but NOT model`
+  - `Feature #31: generated frontmatter matches test-vault (no model, has model-name)`
+- This feature was already correctly implemented (no code changes needed)
+
+#### Feature #32: model-name property is retained in frontmatter
+- Status: PASSED
+- Verified that `model-name:` property (slug like 'gpt-5-2-thinking') IS retained
+- Verified property order: type → model-name → chronum
+- Added 5 tests:
+  - `Feature #32: model-name property IS retained in frontmatter`
+  - `Feature #32: model-name appears BEFORE chronum in property order`
+  - `Feature #32: model-name appears AFTER type in property order`
+  - `Feature #32: test-vault files have model-name in correct position`
+  - `Feature #32: generated frontmatter matches test-vault model-name property`
+- This feature was already correctly implemented (no code changes needed)
+
+### Current Progress
+- Passing: 30/35 features (85.7%)
+- In Progress: 2 features (other agents)
+- Remaining: 3 features
+
+### Test Results
+- All 103 tests passing
+- Infrastructure tests: ✓ (3 tests)
+- Helper function tests: ✓ (98 tests)
+- Integration tests: ✓ (2 tests)
+
+### Files Modified/Created
+- test/runner.mjs: Added 9 new tests for Features #31 and #32
+- test/verify-feature-31.mjs: Created verification script
+
+### Git Commits Made This Session
+1. 9b6f2ff: feat: add tests for Feature #31 (model property removed from frontmatter)
+2. 88921f8: feat: add tests for Feature #32 (model-name property retained in frontmatter)
+
+### Technical Notes
+- Both features were verification-only (implementation was already correct)
+- The frontmatter generation in conversationToMarkdown() only includes `model-name:`
+- No `model:` property is generated anywhere in the code
+- Property order is: title, aliases, parent, type, model-name, chronum, created, updated, tags, project, source
