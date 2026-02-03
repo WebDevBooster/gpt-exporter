@@ -106,6 +106,39 @@ function sanitizeProjectTag(projectName) {
 }
 
 /**
+ * Extract branching information from conversation mapping
+ * Searches through all nodes in conversation.mapping to find branching_from_conversation_id
+ * and branching_from_conversation_title in message metadata.
+ *
+ * @param {Object} conversation - The conversation object with mapping
+ * @returns {{parentId: string, parentTitle: string}|null} Parent info or null if not found
+ */
+function extractBranchingInfo(conversation) {
+    if (!conversation || !conversation.mapping) {
+        return null;
+    }
+
+    // Iterate through all nodes in the mapping
+    for (const nodeId of Object.keys(conversation.mapping)) {
+        const node = conversation.mapping[nodeId];
+
+        // Check if this node has message metadata with branching info
+        if (node.message && node.message.metadata) {
+            const metadata = node.message.metadata;
+
+            if (metadata.branching_from_conversation_id && metadata.branching_from_conversation_title) {
+                return {
+                    parentId: metadata.branching_from_conversation_id,
+                    parentTitle: metadata.branching_from_conversation_title
+                };
+            }
+        }
+    }
+
+    return null;
+}
+
+/**
  * Extract 10-digit integer from create_time timestamp
  * The create_time is a Unix timestamp in seconds with decimal places
  *
@@ -565,5 +598,6 @@ export {
     formatDate,
     formatTruncatedDate,
     getShortConversationId,
-    getChronum
+    getChronum,
+    extractBranchingInfo
 };

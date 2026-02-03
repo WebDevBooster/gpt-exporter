@@ -28,7 +28,8 @@ import {
     formatDate,
     formatTruncatedDate,
     getShortConversationId,
-    getChronum
+    getChronum,
+    extractBranchingInfo
 } from '../export/markdown.js';
 
 /**
@@ -419,6 +420,42 @@ async function runHelperTests() {
         assertEqual(result, 'all-caps-project');
     });
 
+    // Feature #12: sanitizeProjectTag transliterates diacritics to ASCII equivalents
+    await test('sanitizeProjectTag transliterates diacritics to ASCII equivalents', () => {
+        // Test case from feature description: Tëster's Pläýground for Frieñd̄žß
+        const result = sanitizeProjectTag("Tëster's Pläýground for Frieñdžß");
+        assert(result.includes('tester'), `Expected 'tester' in result, got: ${result}`);
+        assert(result.includes('playground'), `Expected 'playground' in result, got: ${result}`);
+        // ñ->n, ž->z, ß->ss gives "friendzss"
+        assert(result.includes('friendzss'), `Expected 'friendzss' in result, got: ${result}`);
+    });
+
+    await test('sanitizeProjectTag handles ä, ö, ü umlaut characters', () => {
+        const result = sanitizeProjectTag('Überäöü');
+        assertEqual(result, 'uberaou', 'German umlauts should transliterate correctly');
+    });
+
+    await test('sanitizeProjectTag handles ß (sharp S)', () => {
+        const result = sanitizeProjectTag('Straße');
+        assertEqual(result, 'strasse', 'ß should become ss');
+    });
+
+    await test('sanitizeProjectTag handles ñ (n with tilde)', () => {
+        const result = sanitizeProjectTag('España');
+        assertEqual(result, 'espana', 'ñ should become n');
+    });
+
+    await test('sanitizeProjectTag handles ž, š, č (Slavic characters)', () => {
+        const result = sanitizeProjectTag('Prážský šílenec');
+        assert(result.includes('prazsky'), `Expected 'prazsky' in result, got: ${result}`);
+        assert(result.includes('silenec'), `Expected 'silenec' in result, got: ${result}`);
+    });
+
+    await test('sanitizeProjectTag handles accented vowels á, é, í, ó, ú', () => {
+        const result = sanitizeProjectTag('Café résumé');
+        assertEqual(result, 'cafe-resume', 'Accented vowels should transliterate correctly');
+    });
+
     // Feature #14: sanitizeProjectTag removes special characters and collapses hyphens
     await test('sanitizeProjectTag removes special characters &#!,;$£', () => {
         // Test the exact characters mentioned in the feature
@@ -460,6 +497,41 @@ async function runHelperTests() {
         // When special chars are between spaces, removal creates consecutive hyphens
         const result = sanitizeProjectTag('hello & world');
         assertEqual(result, 'hello-world', 'Special chars between spaces should not create double hyphens');
+    });
+
+    // Feature #15: sanitizeProjectTag produces correct output for test cases
+    await test('sanitizeProjectTag: English Checking & Tutoring -> english-checking-tutoring', () => {
+        const result = sanitizeProjectTag('English Checking & Tutoring');
+        assertEqual(result, 'english-checking-tutoring', 'Should produce exact expected output');
+    });
+
+    await test('sanitizeProjectTag: complex diacritics with special chars -> tester-s-playground-for-friendzss', () => {
+        // Test: 'Tëster's Pläýground for &#!,;$£ Frieñd̄žß' -> 'tester-s-playground-for-friendzss'
+        const result = sanitizeProjectTag("Tëster's Pläýground for &#!,;$£ Frieñd̄žß");
+        assertEqual(result, 'tester-s-playground-for-friendzss', 'Should handle complex diacritics and special chars');
+    });
+
+    await test('sanitizeProjectTag output contains NO underscores', () => {
+        // Test various inputs that might accidentally produce underscores
+        const testCases = [
+            'Hello World',
+            'Test_Project',
+            'My_App_Name',
+            'English Checking & Tutoring',
+            "Tester's Playground for &#!,;$ Friendzss"
+        ];
+
+        for (const input of testCases) {
+            const result = sanitizeProjectTag(input);
+            assert(!result.includes('_'), `Output "${result}" from input "${input}" should not contain underscores`);
+        }
+    });
+
+    await test('sanitizeProjectTag uses only hyphens as separators (not underscores)', () => {
+        const result = sanitizeProjectTag('Multi Word Project Name');
+        assert(result.includes('-'), 'Should use hyphens as separators');
+        assert(!result.includes('_'), 'Should NOT use underscores');
+        assertEqual(result, 'multi-word-project-name');
     });
 
     // chronum in frontmatter tests
