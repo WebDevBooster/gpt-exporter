@@ -855,6 +855,79 @@ async function runHelperTests() {
         assert(content.includes(expectedParentFormat),
             'Parent property should match exact YAML list format with internal link');
     });
+
+    // Feature #25: Aliases include 8-character conversation ID as first item
+    await test('aliases include 8-character conversation ID as first item', () => {
+        const conversation = {
+            title: 'Unusual Adjective',
+            create_time: 1770126827.760625,
+            update_time: 1770126833.018922,
+            conversation_id: '6981fddd-2834-8394-9b08-a9b19891753c',
+            mapping: {}
+        };
+
+        const result = conversationToMarkdown(conversation);
+        const content = result.content;
+
+        // Verify aliases property has the 8-char ID as first item
+        assert(content.includes('aliases:\n  - 6981fddd'),
+            'First alias should be the 8-character conversation ID');
+    });
+
+    await test('aliases format is YAML list with ID as first item', () => {
+        const conversation = {
+            title: 'Test Conversation',
+            create_time: 1770126827.760625,
+            update_time: 1770126833.018922,
+            conversation_id: '698065a8-9160-8392-a810-0ae50700979b',
+            mapping: {}
+        };
+
+        const result = conversationToMarkdown(conversation);
+        const content = result.content;
+
+        // Verify the exact YAML format: aliases:\n  - <shortId>
+        const aliasMatch = content.match(/aliases:\n\s+- ([a-f0-9]{8})\n/);
+        assert(aliasMatch, 'Aliases should be in YAML list format with 8-char ID');
+        assertEqual(aliasMatch[1], '698065a8', 'First alias should be the 8-char ID');
+    });
+
+    await test('aliases property appears after title in frontmatter', () => {
+        const conversation = {
+            title: 'Test',
+            create_time: 1770126827,
+            update_time: 1770126827,
+            conversation_id: '6981fddd-2834-8394-9b08-a9b19891753c',
+            mapping: {}
+        };
+
+        const result = conversationToMarkdown(conversation);
+        const content = result.content;
+
+        const titleIndex = content.indexOf('title:');
+        const aliasesIndex = content.indexOf('aliases:');
+        const parentIndex = content.indexOf('parent:');
+
+        assert(titleIndex > 0, 'title should be in frontmatter');
+        assert(aliasesIndex > 0, 'aliases should be in frontmatter');
+        assert(parentIndex > 0, 'parent should be in frontmatter');
+
+        assert(aliasesIndex > titleIndex, 'aliases should come after title');
+        assert(aliasesIndex < parentIndex, 'aliases should come before parent');
+    });
+
+    await test('aliases with real conversation data from mock file', () => {
+        const testFile = join(projectRoot, 'test-exports-and-logs', '1-conversation_for_mock_API.json');
+        const conversations = loadUTF16LEJson(testFile);
+        const conv = conversations[0];  // "Unusual Adjective" conversation
+
+        const result = conversationToMarkdown(conv);
+        const content = result.content;
+
+        // The conversation_id is 6981fddd-2834-8394-9b08-a9b19891753c
+        assert(content.includes('aliases:\n  - 6981fddd'),
+            'First alias should be 6981fddd (first 8 chars of conversation_id)');
+    });
 }
 
 /**

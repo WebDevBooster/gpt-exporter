@@ -564,12 +564,20 @@ function conversationToMarkdown(conversation) {
         parentProperty = `parent:\n  - "[[${parentFilename}]]"`;
     }
 
+    // Build aliases property (Modification #6)
+    // First alias: 8-character conversation ID
+    // Second alias: title + space + 8-character ID
+    const shortId = getShortConversationId(conversationId);
+    const aliasesProperty = shortId
+        ? `aliases:\n  - ${shortId}\n  - ${title} ${shortId}`
+        : 'aliases:\n  - ';
+
     // Build YAML frontmatter (new format per spec)
     // Property order: title, aliases, parent, type, model-name, chronum, created, updated, tags, project, source
     const frontmatterLines = [
         '---',
         `title: "${title.replace(/"/g, '\\"')}"`,
-        'aliases: ',
+        aliasesProperty,
         parentProperty,
         'type: gpt-chat',
         `model-name: ${modelSlug}`,
