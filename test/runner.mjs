@@ -1204,6 +1204,10 @@ async function runHelperTests() {
         const conversations = loadUTF16LEJson(testFile);
         const conv = conversations[0];  // "Unusual Adjective" with project
 
+        // Add project info (normally added by background.js during export)
+        conv._projectId = 'g-p-69817ef78ab48191bc06ca7b51f5cc70';
+        conv._projectName = "Tëster's Pläýground for &#!,;$£ Frieñd̄žß";
+
         const result = conversationToMarkdown(conv);
         const content = result.content;
 
@@ -1223,6 +1227,10 @@ async function runHelperTests() {
         // Find "Diacritics and Accents" conversation (has project: English Checking & Tutoring)
         const conv = conversations.find(c => c.conversation_id === '698065a8-9160-8392-a810-0ae50700979b');
         assert(conv, 'Should find Diacritics and Accents conversation');
+
+        // Add project info (normally added by background.js during export)
+        conv._projectId = 'g-p-678ce30e20dc8191ab325e517603d768';
+        conv._projectName = 'English Checking & Tutoring';
 
         const result = conversationToMarkdown(conv);
         const content = result.content;
