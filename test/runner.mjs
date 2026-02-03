@@ -1138,6 +1138,187 @@ async function runHelperTests() {
         assert(content.includes(' 6981255a\nparent:'),
             'Second alias should end with ID followed by parent property');
     });
+
+    // Feature #28: Tags use YAML list format instead of inline
+    await test('Feature #28: tags use YAML list format (not inline)', () => {
+        const conversation = {
+            title: 'Test Conversation',
+            create_time: 1770126827.760625,
+            update_time: 1770126833.018922,
+            conversation_id: '6981fddd-2834-8394-9b08-a9b19891753c',
+            mapping: {}
+        };
+
+        const result = conversationToMarkdown(conversation);
+        const content = result.content;
+
+        // Verify tags is NOT inline format like: tags: gpt-chat or tags: [tag1, tag2]
+        assert(!content.match(/tags:\s*gpt-chat[^\n]/), 'Tags should NOT be inline format');
+        assert(!content.match(/tags:\s*\[/), 'Tags should NOT be array format');
+
+        // Verify tags IS list format with newline
+        assert(content.includes('tags:\n'), 'Tags should end with newline, followed by list items');
+    });
+
+    await test('Feature #28: tags have two-space indentation before list dash', () => {
+        const conversation = {
+            title: 'Test Conversation',
+            create_time: 1770126827.760625,
+            update_time: 1770126833.018922,
+            conversation_id: '6981fddd-2834-8394-9b08-a9b19891753c',
+            mapping: {}
+        };
+
+        const result = conversationToMarkdown(conversation);
+        const content = result.content;
+
+        // Verify tags list items have two-space indentation
+        assert(content.includes('tags:\n  - gpt-chat'),
+            'Tags should have two-space indentation before list dash');
+    });
+
+    await test('Feature #28: gpt-chat is always the first tag', () => {
+        const conversation = {
+            title: 'Test Conversation',
+            create_time: 1770126827.760625,
+            update_time: 1770126833.018922,
+            conversation_id: '6981fddd-2834-8394-9b08-a9b19891753c',
+            mapping: {}
+        };
+
+        const result = conversationToMarkdown(conversation);
+        const content = result.content;
+
+        // Extract tags block
+        const tagsMatch = content.match(/tags:\n([\s\S]*?)(?=\nproject:|source:|---)/);
+        assert(tagsMatch, 'Should find tags block');
+
+        // First tag should be gpt-chat
+        assert(tagsMatch[1].startsWith('  - gpt-chat'),
+            'First tag should be gpt-chat');
+    });
+
+    await test('Feature #28: tags format matches expected test-vault output - with project', () => {
+        // Load the conversation with project
+        const testFile = join(projectRoot, 'test-exports-and-logs', '1-conversation_for_mock_API.json');
+        const conversations = loadUTF16LEJson(testFile);
+        const conv = conversations[0];  // "Unusual Adjective" with project
+
+        const result = conversationToMarkdown(conv);
+        const content = result.content;
+
+        // Expected tags format from test-vault (has project tag)
+        // tags:
+        //   - gpt-chat
+        //   - tester-s-playground-for-friendzss
+        assert(content.includes('tags:\n  - gpt-chat\n  - '),
+            'Tags should have gpt-chat first with proper formatting');
+    });
+
+    await test('Feature #28: tags format matches expected test-vault output - Diacritics and Accents', () => {
+        // Load the branching conversations
+        const testFile = join(projectRoot, 'test-exports-and-logs', '4-branching-conversations_for_mock_API.json');
+        const conversations = loadUTF16LEJson(testFile);
+
+        // Find "Diacritics and Accents" conversation (has project: English Checking & Tutoring)
+        const conv = conversations.find(c => c.conversation_id === '698065a8-9160-8392-a810-0ae50700979b');
+        assert(conv, 'Should find Diacritics and Accents conversation');
+
+        const result = conversationToMarkdown(conv);
+        const content = result.content;
+
+        // Expected from test-vault/English_Checking_&_Tutoring/Diacritics_and_Accents_698065a8.md:
+        // tags:
+        //   - gpt-chat
+        //   - english-checking-tutoring
+        const expectedTagsFormat = 'tags:\n  - gpt-chat\n  - english-checking-tutoring\n';
+        assert(content.includes(expectedTagsFormat),
+            'Tags format should match expected test-vault output exactly');
+    });
+
+    // Feature #31: model property is removed from frontmatter (only model-name remains)
+    await test('Feature #31: model property is NOT in frontmatter', () => {
+        const conversation = {
+            title: 'Test Conversation',
+            create_time: 1770126827.760625,
+            update_time: 1770126833.018922,
+            conversation_id: '6981fddd-2834-8394-9b08-a9b19891753c',
+            mapping: {
+                'node1': {
+                    message: {
+                        metadata: {
+                            model_slug: 'gpt-4'
+                        }
+                    }
+                }
+            }
+        };
+
+        const result = conversationToMarkdown(conversation);
+        const frontmatter = result.content.split('---')[1];
+
+        // Should NOT have 'model:' property (the display name like 'GPT-4')
+        assert(!(/\nmodel: /.test(frontmatter)),
+            'Frontmatter should NOT contain model: property');
+    });
+
+    await test('Feature #31: model-name property IS in frontmatter', () => {
+        const conversation = {
+            title: 'Test Conversation',
+            create_time: 1770126827.760625,
+            update_time: 1770126833.018922,
+            conversation_id: '6981fddd-2834-8394-9b08-a9b19891753c',
+            mapping: {
+                'node1': {
+                    message: {
+                        metadata: {
+                            model_slug: 'gpt-4'
+                        }
+                    }
+                }
+            }
+        };
+
+        const result = conversationToMarkdown(conversation);
+        const content = result.content;
+
+        // Should have 'model-name:' property (the slug)
+        assert(content.includes('model-name: gpt-4'),
+            'Frontmatter should contain model-name: gpt-4');
+    });
+
+    await test('Feature #31: test-vault files have model-name but NOT model', () => {
+        // Read expected test-vault file
+        const expectedPath = join(projectRoot, 'test-vault', 'English_Checking_&_Tutoring', 'Diacritics_and_Accents_698065a8.md');
+        const content = readFileSync(expectedPath, 'utf8');
+
+        // Should NOT have 'model:' property
+        assert(!(/\nmodel: /.test(content)),
+            'Test-vault file should NOT have model: property');
+
+        // Should have 'model-name:' property
+        assert(content.includes('model-name:'),
+            'Test-vault file should have model-name: property');
+    });
+
+    await test('Feature #31: generated frontmatter matches test-vault (no model, has model-name)', () => {
+        // Load actual mock conversation
+        const testFile = join(projectRoot, 'test-exports-and-logs', '4-branching-conversations_for_mock_API.json');
+        const conversations = loadUTF16LEJson(testFile);
+        const conv = conversations.find(c => c.conversation_id === '698065a8-9160-8392-a810-0ae50700979b');
+        assert(conv, 'Should find test conversation');
+
+        const result = conversationToMarkdown(conv);
+        const content = result.content;
+
+        // Verify model: is NOT present
+        assert(!(/\nmodel: /.test(content)),
+            'Generated content should NOT have model: property');
+
+        // Verify model-name: IS present
+        assert(content.includes('model-name:'),
+            'Generated content should have model-name: property');
+    });
 }
 
 /**

@@ -577,6 +577,16 @@ function conversationToMarkdown(conversation) {
         ? `aliases:\n  - ${shortId}\n  - ${title} ${shortId}`
         : 'aliases:\n  - ';
 
+    // Build tags property in YAML list format
+    // gpt-chat is always first; if project exists, add sanitized project tag second
+    let tagsProperty;
+    if (projectName) {
+        const projectTag = sanitizeProjectTag(projectName);
+        tagsProperty = `tags:\n  - gpt-chat\n  - ${projectTag}`;
+    } else {
+        tagsProperty = 'tags:\n  - gpt-chat';
+    }
+
     // Build YAML frontmatter (new format per spec)
     // Property order: title, aliases, parent, type, model-name, chronum, created, updated, tags, project, source
     const frontmatterLines = [
@@ -589,10 +599,10 @@ function conversationToMarkdown(conversation) {
         `chronum: ${chronum}`,
         `created: ${created}`,
         `updated: ${updated}`,
-        'tags: gpt-chat',
+        tagsProperty,
     ];
 
-    // Add project tag if this is a project conversation
+    // Add project property if this is a project conversation
     if (projectName) {
         frontmatterLines.push(`project: "${projectName.replace(/"/g, '\\"')}"`);
     }
