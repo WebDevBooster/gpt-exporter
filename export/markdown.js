@@ -680,12 +680,22 @@ function conversationToMarkdown(conversation) {
 
     // Build message content
     const messages = extractMessages(conversation);
-    const messageBlocks = messages.map(msg => {
+    const messageBlocks = messages.map((msg, index) => {
         if (msg.role === 'user') {
             // Format user messages as Obsidian callouts
             const calloutContent = formatUserContentAsCallout(msg.content);
             return `> [!me:]\n${calloutContent}`;
         } else {
+            // Check if this is a JSON-only message followed by another ChatGPT message
+            // If so, wrap it in code fences (Feature #38)
+            const trimmedContent = msg.content.trim();
+            const isJsonObject = trimmedContent.startsWith('{') && trimmedContent.endsWith('}');
+            const nextMsg = messages[index + 1];
+            const isFollowedByChatGPT = nextMsg && nextMsg.role === 'assistant';
+
+            if (isJsonObject && isFollowedByChatGPT) {
+                return `#### ChatGPT:\n\`\`\`\n${msg.content}\n\`\`\``;
+            }
             return `#### ChatGPT:\n${msg.content}`;
         }
     });

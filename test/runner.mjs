@@ -1854,6 +1854,196 @@ async function runHelperTests() {
         assert(result.includes('</html>\n```'), 'Closing fence should not be prefixed');
         assert(result.includes('> And some inline code:'), 'Text after code fence should be prefixed');
     });
+
+    // Feature #38: JSON-only ChatGPT messages followed by another ChatGPT message should be in code fences
+    await test('Feature #38: JSON-only message followed by ChatGPT message is wrapped in code fences', () => {
+        // Create a conversation with a JSON-only message followed by another ChatGPT message
+        const conv = {
+            title: 'JSON Test',
+            conversation_id: 'test1234-json-test',
+            create_time: 1770126827.760625,
+            update_time: 1770126827.760625,
+            mapping: {
+                'root': { id: 'root', message: null, parent: undefined, children: ['user1'] },
+                'user1': { id: 'user1', parent: 'root', children: ['assistant1'],
+                    message: { author: { role: 'user' }, content: { content_type: 'text', parts: ['What time is it?'] } }
+                },
+                'assistant1': { id: 'assistant1', parent: 'user1', children: ['assistant2'],
+                    message: { author: { role: 'assistant' }, content: { content_type: 'text', parts: ['{"query":"current time"}'] } }
+                },
+                'assistant2': { id: 'assistant2', parent: 'assistant1', children: [],
+                    message: { author: { role: 'assistant' }, content: { content_type: 'text', parts: ['The current time is 2:00 PM.'] } }
+                }
+            },
+            current_node: 'assistant2'
+        };
+
+        const result = conversationToMarkdown(conv);
+
+        // The first ChatGPT message (JSON object) should be wrapped in code fences
+        assert(result.content.includes('#### ChatGPT:\n```\n{"query":"current time"}\n```'),
+            'JSON-only message followed by another ChatGPT message should be in code fences');
+        // The second ChatGPT message should NOT be in code fences
+        assert(result.content.includes('#### ChatGPT:\nThe current time is 2:00 PM.'),
+            'Regular ChatGPT message should NOT be in code fences');
+    });
+
+    await test('Feature #38: JSON-only message NOT followed by ChatGPT message is NOT wrapped in code fences', () => {
+        // Create a conversation with a JSON-only message NOT followed by another ChatGPT message
+        const conv = {
+            title: 'JSON Test End',
+            conversation_id: 'test5678-json-end',
+            create_time: 1770126827.760625,
+            update_time: 1770126827.760625,
+            mapping: {
+                'root': { id: 'root', message: null, parent: undefined, children: ['user1'] },
+                'user1': { id: 'user1', parent: 'root', children: ['assistant1'],
+                    message: { author: { role: 'user' }, content: { content_type: 'text', parts: ['What time is it?'] } }
+                },
+                'assistant1': { id: 'assistant1', parent: 'user1', children: [],
+                    message: { author: { role: 'assistant' }, content: { content_type: 'text', parts: ['{"query":"current time"}'] } }
+                }
+            },
+            current_node: 'assistant1'
+        };
+
+        const result = conversationToMarkdown(conv);
+
+        // The ChatGPT message (JSON object) should NOT be wrapped in code fences because
+        // it's the last message (not followed by another ChatGPT message)
+        assert(result.content.includes('#### ChatGPT:\n{"query":"current time"}'),
+            'JSON-only message at end of conversation should NOT be in code fences');
+        assert(!result.content.includes('```\n{"query":"current time"}\n```'),
+            'JSON-only message at end should NOT have code fences');
+    });
+
+    await test('Feature #38: JSON-only message followed by USER message is NOT wrapped in code fences', () => {
+        // Create a conversation with JSON followed by user message
+        const conv = {
+            title: 'JSON Then User',
+            conversation_id: 'test9abc-json-user',
+            create_time: 1770126827.760625,
+            update_time: 1770126827.760625,
+            mapping: {
+                'root': { id: 'root', message: null, parent: undefined, children: ['user1'] },
+                'user1': { id: 'user1', parent: 'root', children: ['assistant1'],
+                    message: { author: { role: 'user' }, content: { content_type: 'text', parts: ['First question'] } }
+                },
+                'assistant1': { id: 'assistant1', parent: 'user1', children: ['user2'],
+                    message: { author: { role: 'assistant' }, content: { content_type: 'text', parts: ['{"query":"current time"}'] } }
+                },
+                'user2': { id: 'user2', parent: 'assistant1', children: [],
+                    message: { author: { role: 'user' }, content: { content_type: 'text', parts: ['Second question'] } }
+                }
+            },
+            current_node: 'user2'
+        };
+
+        const result = conversationToMarkdown(conv);
+
+        // The JSON message should NOT be wrapped in code fences because next message is from user
+        assert(result.content.includes('#### ChatGPT:\n{"query":"current time"}'),
+            'JSON-only message followed by USER should NOT be in code fences');
+    });
+
+    await test('Feature #38: non-JSON message is NOT wrapped in code fences', () => {
+        // Regular text messages should never be wrapped in code fences
+        const conv = {
+            title: 'Regular Text',
+            conversation_id: 'testdef0-regular',
+            create_time: 1770126827.760625,
+            update_time: 1770126827.760625,
+            mapping: {
+                'root': { id: 'root', message: null, parent: undefined, children: ['user1'] },
+                'user1': { id: 'user1', parent: 'root', children: ['assistant1'],
+                    message: { author: { role: 'user' }, content: { content_type: 'text', parts: ['Hello'] } }
+                },
+                'assistant1': { id: 'assistant1', parent: 'user1', children: ['assistant2'],
+                    message: { author: { role: 'assistant' }, content: { content_type: 'text', parts: ['Hello! How can I help you?'] } }
+                },
+                'assistant2': { id: 'assistant2', parent: 'assistant1', children: [],
+                    message: { author: { role: 'assistant' }, content: { content_type: 'text', parts: ['Let me know if you have questions.'] } }
+                }
+            },
+            current_node: 'assistant2'
+        };
+
+        const result = conversationToMarkdown(conv);
+
+        // Neither ChatGPT message should be in code fences
+        assert(result.content.includes('#### ChatGPT:\nHello! How can I help you?'),
+            'Regular text should NOT be in code fences');
+        assert(!result.content.includes('```\nHello! How can I help you?\n```'),
+            'Regular text should NOT have code fence markers');
+    });
+
+    await test('Feature #38: message starting with { but not ending with } is NOT wrapped', () => {
+        // Message that looks like JSON at start but is not JSON
+        const conv = {
+            title: 'Partial JSON',
+            conversation_id: 'testghi1-partial',
+            create_time: 1770126827.760625,
+            update_time: 1770126827.760625,
+            mapping: {
+                'root': { id: 'root', message: null, parent: undefined, children: ['user1'] },
+                'user1': { id: 'user1', parent: 'root', children: ['assistant1'],
+                    message: { author: { role: 'user' }, content: { content_type: 'text', parts: ['Tell me about JSON'] } }
+                },
+                'assistant1': { id: 'assistant1', parent: 'user1', children: ['assistant2'],
+                    message: { author: { role: 'assistant' }, content: { content_type: 'text', parts: ['{Objects in JavaScript are enclosed in curly braces.'] } }
+                },
+                'assistant2': { id: 'assistant2', parent: 'assistant1', children: [],
+                    message: { author: { role: 'assistant' }, content: { content_type: 'text', parts: ['Hope that helps!'] } }
+                }
+            },
+            current_node: 'assistant2'
+        };
+
+        const result = conversationToMarkdown(conv);
+
+        // Message starting with { but not ending with } should NOT be wrapped
+        assert(result.content.includes('#### ChatGPT:\n{Objects in JavaScript are enclosed'),
+            'Partial JSON-like text should NOT be in code fences');
+    });
+
+    await test('Feature #38: spec example - JSON query wrapped in code fences when followed by ChatGPT', () => {
+        // Test case from the feature description
+        const conv = {
+            title: 'Spec Example',
+            conversation_id: 'testspec-example',
+            create_time: 1770126827.760625,
+            update_time: 1770126827.760625,
+            mapping: {
+                'root': { id: 'root', message: null, parent: undefined, children: ['user1'] },
+                'user1': { id: 'user1', parent: 'root', children: ['assistant1'],
+                    message: { author: { role: 'user' }, content: { content_type: 'text', parts: ['What time is it?'] } }
+                },
+                'assistant1': { id: 'assistant1', parent: 'user1', children: ['assistant2'],
+                    message: { author: { role: 'assistant' }, content: { content_type: 'text', parts: ['{"query":"current time"}'] } }
+                },
+                'assistant2': { id: 'assistant2', parent: 'assistant1', children: [],
+                    message: { author: { role: 'assistant' }, content: { content_type: 'text', parts: ['Second message.'] } }
+                }
+            },
+            current_node: 'assistant2'
+        };
+
+        const result = conversationToMarkdown(conv);
+
+        // Per spec, the output should be:
+        // #### ChatGPT:
+        // ```
+        // {"query":"current time"}
+        // ```
+        //
+        // #### ChatGPT:
+        // Second message.
+
+        assert(result.content.includes('#### ChatGPT:\n```\n{"query":"current time"}\n```'),
+            'Spec example: JSON query should be wrapped in code fences');
+        assert(result.content.includes('#### ChatGPT:\nSecond message.'),
+            'Spec example: Second ChatGPT message should be normal');
+    });
 }
 
 /**
