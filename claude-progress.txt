@@ -633,3 +633,74 @@
 - The frontmatter generation in conversationToMarkdown() only includes `model-name:`
 - No `model:` property is generated anywhere in the code
 - Property order is: title, aliases, parent, type, model-name, chronum, created, updated, tags, project, source
+
+---
+
+## Session 13 (Agent Batch #28-30) - 2026-02-03
+
+### Features Completed This Session: 3
+
+#### Feature #28: Tags use YAML list format instead of inline
+- Status: PASSED
+- Modified `conversationToMarkdown()` in export/markdown.js to generate tags in YAML list format
+- Changed from inline `tags: gpt-chat` to:
+  ```yaml
+  tags:
+    - gpt-chat
+  ```
+- Added `tagsProperty` builder that conditionally adds sanitized project tag
+- Added 6 tests verifying:
+  - YAML list format (not inline)
+  - Two-space indentation before list dash
+  - gpt-chat is always first tag
+  - Tags format matches test-vault output
+
+#### Feature #29: Project tag added as second item when conversation is in project
+- Status: PASSED
+- Verified `sanitizeProjectTag()` is used for project name
+- When project exists, tags property shows:
+  ```yaml
+  tags:
+    - gpt-chat
+    - english-checking-tutoring
+  ```
+- Added 4 tests verifying:
+  - Project tag is second item when project exists
+  - sanitizeProjectTag used for project name
+  - No project tag when no project
+  - Output matches test-vault expectations
+
+#### Feature #30: Non-project conversations have only gpt-chat tag
+- Status: PASSED
+- Verified that conversations without _projectName have only gpt-chat tag
+- Handles edge cases:
+  - Empty string project name treated as no project
+  - Whitespace-only project name treated as no project
+- Added 4 tests verifying single gpt-chat tag for non-project conversations
+
+### Current Progress
+- Passing: 32/35 features (91.4%)
+- In Progress: 3 features (other agents)
+- Remaining: 0 features (all features complete or in progress)
+
+### Test Results
+- All 111 tests passing
+- Infrastructure tests: ✓ (3 tests)
+- Helper function tests: ✓ (106 tests)
+- Integration tests: ✓ (2 tests)
+
+### Files Modified
+- export/markdown.js: Added tagsProperty builder with YAML list format (Feature #28)
+- test/runner.mjs: Added 14 new tests for Features #28, #29, #30
+
+### Git Commits Made This Session
+1. edab35d: feat: implement tags YAML list format (Feature #28)
+2. bf81989: feat: add tests for Feature #29 (project tag as second item)
+3. e4f3066: feat: add tests for Feature #30 (non-project conversations have only gpt-chat tag)
+
+### Technical Notes
+- Tags property now uses conditional logic:
+  - If projectName exists: `tags:\n  - gpt-chat\n  - ${sanitizeProjectTag(projectName)}`
+  - If no project: `tags:\n  - gpt-chat`
+- The _projectName is trimmed before checking (handles whitespace-only values)
+- Tests verify both real mock data (with project info added) and synthetic test cases

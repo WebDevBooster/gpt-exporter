@@ -1660,6 +1660,31 @@ async function runIntegrationTests() {
         assert(Array.isArray(conversations), 'Should be an array');
         assert(conversations.length >= 1, 'Should have at least 1 conversation');
     });
+
+    // Feature #33: End-to-end test - Generated output matches Unusual_Adjective_6981fddd.md exactly
+    await test('Feature #33: generated output matches Unusual_Adjective_6981fddd.md exactly', () => {
+        // Load 1-conversation_for_mock_API.json
+        const testFile = join(projectRoot, 'test-exports-and-logs', '1-conversation_for_mock_API.json');
+        const conversations = loadUTF16LEJson(testFile);
+        assert(conversations.length === 1, 'Should have exactly 1 conversation');
+
+        const conv = conversations[0];
+
+        // Add project metadata (this is normally added by background.js during export)
+        conv._projectId = 'g-p-69817ef78ab48191bc06ca7b51f5cc70';
+        conv._projectName = "Tëster's Pläýground for &#!,;$£ Frieñd̄žß";
+
+        // Process through conversationToMarkdown
+        const result = conversationToMarkdown(conv);
+
+        // Compare to expected output file in test-vault
+        const expectedPath = join(projectRoot, 'test-vault', "Tëster's_Pläýground_for_&#!,;$£_Frieñd̄žß", 'Unusual_Adjective_6981fddd.md');
+        const comparison = compareMarkdown(result.content, expectedPath);
+
+        if (!comparison.pass) {
+            throw new Error(`Output does not match expected file:\n${comparison.diff}`);
+        }
+    });
 }
 
 /**
