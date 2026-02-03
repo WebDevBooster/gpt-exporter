@@ -6,3 +6,8 @@ test-vault/
 # IDE
 .idea
 .claude/
+
+# Other
+.autocoder
+CLAUDE.md
+claude-progress.txt
