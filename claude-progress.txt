@@ -389,3 +389,50 @@
 - Branching info is in message.metadata, not at conversation root level
 - Parent link uses same generateFilename format as actual file output
 - This ensures Obsidian [[]] links resolve correctly to the parent file
+
+---
+
+## Session 9 (Agent for Feature #25) - 2026-02-03
+
+### Feature Completed This Session: 1
+
+#### Feature #25: Aliases include 8-character conversation ID as first item
+- Status: PASSED
+- Modified `conversationToMarkdown()` in export/markdown.js to generate aliases property
+- Added aliases property with YAML list format:
+  ```yaml
+  aliases:
+    - 6981fddd
+    - Unusual Adjective 6981fddd
+  ```
+- First alias is the 8-character short conversation ID
+- Second alias is title + space + 8-character ID
+- Handles edge case when conversationId is missing (shows empty list item)
+- Added 4 tests verifying:
+  - First alias is 8-character conversation ID
+  - YAML list format with correct indentation
+  - Aliases appears after title, before parent
+  - Works with real conversation data from mock files
+
+### Current Progress
+- Passing: 24/35 features (68.6%)
+- In Progress: 3 features (other agents)
+- Remaining: 8 features
+
+### Test Results
+- All 78 tests passing
+- Infrastructure tests: ✓ (3 tests)
+- Helper function tests: ✓ (73 tests)
+- Integration tests: ✓ (2 tests)
+
+### Files Modified
+- export/markdown.js: Added aliasesProperty with shortId as first item
+- test/runner.mjs: Added 4 new tests for aliases functionality
+
+### Git Commits Made This Session
+1. 13e60f3: feat: add 8-character conversation ID as first alias (Feature #25)
+
+### Technical Notes
+- Uses getShortConversationId() helper function already in codebase
+- aliasesProperty builds the full YAML block including both aliases
+- Property order in frontmatter: title, aliases, parent, type, model-name, chronum, created, updated, tags, project, source
