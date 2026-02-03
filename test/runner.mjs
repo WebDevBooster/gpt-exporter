@@ -22,6 +22,7 @@ const projectRoot = resolve(__dirname, '..');
 // Import the markdown module (will be updated as modifications are implemented)
 import {
     sanitizeFilename,
+    sanitizeProjectTag,
     conversationToMarkdown,
     extractMessages,
     formatDate,
@@ -399,6 +400,23 @@ async function runHelperTests() {
         assert(typeof result === 'string', 'Should return a string');
         assert(result.length === 16, 'Should be 16 characters (YYYY-MM-DDTHH:MM)');
         assert(result.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/), 'Should match truncated ISO format');
+    });
+
+    // sanitizeProjectTag tests - Feature #11: converts to lowercase
+    await test('sanitizeProjectTag converts to lowercase', () => {
+        const result = sanitizeProjectTag('English Checking & Tutoring');
+        assert(result.startsWith('english'), `Expected result to start with 'english', got: ${result}`);
+    });
+
+    await test('sanitizeProjectTag handles mixed case input', () => {
+        const result = sanitizeProjectTag('TEST Project NAME');
+        assert(!result.match(/[A-Z]/), 'Should not contain any uppercase characters');
+        assertEqual(result, 'test-project-name');
+    });
+
+    await test('sanitizeProjectTag handles all uppercase input', () => {
+        const result = sanitizeProjectTag('ALL CAPS PROJECT');
+        assertEqual(result, 'all-caps-project');
     });
 
     // chronum in frontmatter tests

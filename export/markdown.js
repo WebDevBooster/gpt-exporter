@@ -45,6 +45,67 @@ function getShortConversationId(conversationId) {
 }
 
 /**
+ * Convert project name to valid Obsidian tag
+ * Uses only lowercase letters, numbers, and hyphens (NO underscores)
+ *
+ * Rules:
+ * - Convert to lowercase
+ * - Transliterate diacritics to ASCII equivalents (a, e, o, u, s, n, z, etc.)
+ * - Replace spaces and apostrophes with hyphens
+ * - Remove all special characters (&#!,;$, etc.)
+ * - Collapse multiple consecutive hyphens to single hyphen
+ * - Remove leading/trailing hyphens
+ *
+ * @param {string} projectName - The project name to sanitize
+ * @returns {string} Valid Obsidian tag
+ */
+function sanitizeProjectTag(projectName) {
+    if (!projectName || typeof projectName !== 'string') {
+        return '';
+    }
+
+    // Step 1: Convert to lowercase
+    let tag = projectName.toLowerCase();
+
+    // Step 2: Transliterate common diacritics to ASCII equivalents
+    const diacriticMap = {
+        'á': 'a', 'à': 'a', 'ä': 'a', 'â': 'a', 'ã': 'a', 'å': 'a', 'ą': 'a', 'ă': 'a',
+        'é': 'e', 'è': 'e', 'ë': 'e', 'ê': 'e', 'ę': 'e', 'ě': 'e',
+        'í': 'i', 'ì': 'i', 'ï': 'i', 'î': 'i', 'ı': 'i',
+        'ó': 'o', 'ò': 'o', 'ö': 'o', 'ô': 'o', 'õ': 'o', 'ø': 'o', 'ő': 'o',
+        'ú': 'u', 'ù': 'u', 'ü': 'u', 'û': 'u', 'ű': 'u', 'ů': 'u',
+        'ý': 'y', 'ÿ': 'y',
+        'ñ': 'n', 'ń': 'n', 'ň': 'n',
+        'ç': 'c', 'č': 'c', 'ć': 'c',
+        'ß': 'ss',
+        'ś': 's', 'š': 's', 'ş': 's',
+        'ź': 'z', 'ž': 'z', 'ż': 'z',
+        'ł': 'l', 'ľ': 'l',
+        'ř': 'r',
+        'ť': 't',
+        'ď': 'd', 'đ': 'd',
+        'æ': 'ae', 'œ': 'oe',
+        'þ': 'th', 'ð': 'd'
+    };
+
+    tag = tag.split('').map(char => diacriticMap[char] || char).join('');
+
+    // Step 3: Replace spaces and apostrophes with hyphens
+    tag = tag.replace(/[\s']/g, '-');
+
+    // Step 4: Remove all characters except lowercase letters, numbers, and hyphens
+    tag = tag.replace(/[^a-z0-9-]/g, '');
+
+    // Step 5: Collapse multiple consecutive hyphens to single hyphen
+    tag = tag.replace(/-+/g, '-');
+
+    // Step 6: Remove leading/trailing hyphens
+    tag = tag.replace(/^-+|-+$/g, '');
+
+    return tag;
+}
+
+/**
  * Extract 10-digit integer from create_time timestamp
  * The create_time is a Unix timestamp in seconds with decimal places
  *
@@ -498,6 +559,7 @@ function conversationToMarkdown(conversation) {
 
 export {
     sanitizeFilename,
+    sanitizeProjectTag,
     conversationToMarkdown,
     extractMessages,
     formatDate,
