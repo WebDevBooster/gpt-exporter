@@ -1,0 +1,54 @@
+# GPT Exporter - Frontmatter Enhancement Progress
+
+## Session 2026-02-03
+
+### Features Completed This Session: 3
+
+#### Feature #1: Test runner loads UTF-16LE JSON files correctly
+- Status: PASSED
+- Implementation: `loadUTF16LEJson()` function in test/runner.mjs
+- Verified loading of all three mock JSON files:
+  - 1-conversation_for_mock_API.json (1 conversation)
+  - 3-conversations_for_mock_API.json (3 conversations)
+  - 4-branching-conversations_for_mock_API.json (5 conversations)
+- Handles UTF-16LE BOM correctly and falls back to UTF-8
+
+#### Feature #2: Test runner can import ES modules from export/markdown.js
+- Status: PASSED
+- Implementation: package.json has "type": "module" for ES module support
+- Successfully imports:
+  - sanitizeFilename
+  - conversationToMarkdown
+  - extractMessages
+  - formatDate
+
+#### Feature #3: Output comparison utility detects differences
+- Status: PASSED
+- Implementation: `compareMarkdown()` function in test/runner.mjs
+- Features:
+  - Detects nonexistent expected files
+  - Passes when content matches
+  - Detects and reports line-level differences
+  - Normalizes CRLF line endings for cross-platform compatibility
+  - Reports expected vs actual content for each differing line
+
+### Files Modified/Created
+- test/runner.mjs - Main test runner with infrastructure tests
+- test/verify-json-loading.mjs - Verification script for UTF-16LE loading
+- test/verify-es-imports.mjs - Verification script for ES module imports
+- test/verify-comparison.mjs - Verification script for comparison utility
+- package.json - Node.js project config with ES module support
+- init.sh - Initialization script
+
+### Current Progress
+- Passing: 3/35 features (8.6%)
+- In Progress: 6 features (other agents)
+- Remaining: 26 features
+
+### Next Steps
+- Other agents are working on helper function features
+- Integration tests will need updating as markdown.js modifications are made
+- Expected output files in test-vault/ are ready for comparison testing
+
+### Git Commits
+- 0b58712: feat: enhance test infrastructure for features #1, #2, #3
