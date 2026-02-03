@@ -646,6 +646,36 @@ async function runHelperTests() {
         assertEqual(result, 'Branch_·_Diacritics_and_Accents_6981255a', 'Should handle special characters in title');
     });
 
+    // Feature #24: Filename handles special characters in title correctly (verify against test-vault)
+    await test('filename from mock data matches expected test-vault filename (Feature #24)', () => {
+        // Load branching conversations from test data (with corrupted UTF-16LE encoding)
+        const testFile = join(projectRoot, 'test-exports-and-logs', '4-branching-conversations_for_mock_API.json');
+        const conversations = loadUTF16LEJson(testFile);
+
+        // Find the Branch conversation
+        const branchConv = conversations.find(c => c.conversation_id === '6981255a-0c54-8393-9176-98d226ea8c0c');
+        assert(branchConv, 'Should find the branch conversation');
+
+        // Generate markdown
+        const result = conversationToMarkdown(branchConv);
+
+        // Expected filename from test-vault (uses middle dot U+00B7)
+        const expectedFilename = 'Branch_·_Diacritics_and_Accents_6981255a.md';
+
+        // Get filename without project folder prefix
+        const filenameWithoutFolder = result.filename.split('/').pop();
+
+        assertEqual(filenameWithoutFolder, expectedFilename,
+            'Generated filename should match expected test-vault filename (normalizing encoding issues)');
+    });
+
+    await test('sanitizeFilename normalizes corrupted middle dot from UTF-16LE encoding', () => {
+        // The JSON file has ┬╖ (U+252C U+2556) instead of · (U+00B7) due to encoding corruption
+        const titleWithCorruptedChars = 'Branch \u252C\u2556 Diacritics';
+        const result = sanitizeFilename(titleWithCorruptedChars);
+        assertEqual(result, 'Branch_·_Diacritics', 'Should normalize corrupted chars to middle dot');
+    });
+
     await test('generateFilename returns sanitized title when conversationId is missing', () => {
         const result = generateFilename('Test Title', null);
         assertEqual(result, 'Test_Title', 'Should return just sanitized title without ID');
@@ -927,6 +957,81 @@ async function runHelperTests() {
         // The conversation_id is 6981fddd-2834-8394-9b08-a9b19891753c
         assert(content.includes('aliases:\n  - 6981fddd'),
             'First alias should be 6981fddd (first 8 chars of conversation_id)');
+    });
+
+    // Feature #26: Aliases include title + space + ID as second item
+    await test('aliases include title + space + ID as second item (Feature #26)', () => {
+        const conversation = {
+            title: 'Unusual Adjective',
+            create_time: 1770126827.760625,
+            update_time: 1770126833.018922,
+            conversation_id: '6981fddd-2834-8394-9b08-a9b19891753c',
+            mapping: {}
+        };
+
+        const result = conversationToMarkdown(conversation);
+        const content = result.content;
+
+        // Second alias should be "title space 8-char-ID"
+        assert(content.includes('  - Unusual Adjective 6981fddd'),
+            'Second alias should be title + space + 8-char ID: "Unusual Adjective 6981fddd"');
+    });
+
+    await test('second alias preserves original title (not sanitized)', () => {
+        const conversation = {
+            title: 'Test & Special Characters!',
+            create_time: 1770126827.760625,
+            update_time: 1770126833.018922,
+            conversation_id: '698065a8-9160-8392-a810-0ae50700979b',
+            mapping: {}
+        };
+
+        const result = conversationToMarkdown(conversation);
+        const content = result.content;
+
+        // Second alias should preserve the original title with special characters
+        assert(content.includes('  - Test & Special Characters! 698065a8'),
+            'Second alias should preserve original title: "Test & Special Characters! 698065a8"');
+    });
+
+    await test('aliases YAML format matches spec example', () => {
+        const conversation = {
+            title: 'Unusual Adjective',
+            create_time: 1770126827.760625,
+            update_time: 1770126833.018922,
+            conversation_id: '6981fddd-2834-8394-9b08-a9b19891753c',
+            mapping: {}
+        };
+
+        const result = conversationToMarkdown(conversation);
+        const content = result.content;
+
+        // Verify exact format matches spec:
+        // aliases:
+        //   - 6981fddd
+        //   - Unusual Adjective 6981fddd
+        const expectedFormat = 'aliases:\n  - 6981fddd\n  - Unusual Adjective 6981fddd';
+        assert(content.includes(expectedFormat),
+            'Aliases format should match spec exactly with ID first, then title+ID');
+    });
+
+    await test('aliases with real branching conversation data', () => {
+        const testFile = join(projectRoot, 'test-exports-and-logs', '4-branching-conversations_for_mock_API.json');
+        const conversations = loadUTF16LEJson(testFile);
+
+        // Find "Branch · Diacritics and Accents" conversation
+        const branchConv = conversations.find(c => c.conversation_id === '6981255a-0c54-8393-9176-98d226ea8c0c');
+        assert(branchConv, 'Should find the branch conversation');
+
+        const result = conversationToMarkdown(branchConv);
+        const content = result.content;
+
+        // Verify both aliases are present
+        assert(content.includes('  - 6981255a'), 'First alias should be 8-char ID');
+        // The title should be preserved in second alias
+        const title = branchConv.title;
+        assert(content.includes(`  - ${title} 6981255a`),
+            `Second alias should be "${title} 6981255a"`);
     });
 }
 
