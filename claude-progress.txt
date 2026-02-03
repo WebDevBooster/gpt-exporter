@@ -526,3 +526,56 @@
 - Corruption produces box-drawing chars: `┬` (U+252C) and `╖` (U+2556)
 - Normalization is done first in sanitizeFilename before other processing
 - This fix ensures compatibility with the expected test-vault filenames
+
+---
+
+## Session 12 (Agent for Feature #27) - 2026-02-03
+
+### Feature Completed This Session: 1
+
+#### Feature #27: Aliases appear in correct YAML list format
+- Status: PASSED
+- Verified existing implementation generates correct YAML list format (not inline)
+- Format verified:
+  ```yaml
+  aliases:
+    - 6981fddd
+    - Unusual Adjective 6981fddd
+  ```
+- Key requirements verified:
+  1. Aliases uses YAML list format, NOT inline format like `aliases: [id1, id2]`
+  2. Two-space indentation before each list dash (`  - `)
+  3. Output matches expected test-vault files exactly
+
+### Implementation Details
+- Added 5 new tests in test/runner.mjs:
+  - `Feature #27: aliases use YAML list format (not inline)`
+  - `Feature #27: aliases have two-space indentation before list dash`
+  - `Feature #27: aliases format matches expected test-vault output - Unusual Adjective`
+  - `Feature #27: aliases format matches expected test-vault output - Diacritics and Accents`
+  - `Feature #27: aliases format matches expected test-vault output - Branch conversation`
+- Created verification script: test/verify-feature-27.mjs
+
+### Current Progress
+- Passing: 27/35 features (77.1%)
+- In Progress: 0 features
+- Remaining: 8 features
+
+### Test Results
+- All 89 tests passing
+- Infrastructure tests: ✓ (3 tests)
+- Helper function tests: ✓ (84 tests)
+- Integration tests: ✓ (2 tests)
+
+### Files Modified/Created
+- test/runner.mjs: Added 5 new tests for Feature #27
+- test/verify-feature-27.mjs: Created verification script
+
+### Git Commits Made This Session
+1. 62025e1: feat: add tests for Feature #27 (aliases YAML list format)
+
+### Technical Notes
+- The aliasesProperty in markdown.js (lines 572-578) already generates correct format
+- Uses template literal with explicit newlines and two-space indentation
+- Format: `aliases:\n  - ${shortId}\n  - ${title} ${shortId}`
+- This ensures Obsidian recognizes the aliases correctly
