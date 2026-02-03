@@ -1,0 +1,22 @@
+{
+  "name": "gpt-exporter-tests",
+  "version": "1.0.0",
+  "description": "Test suite for GPT Exporter Chrome extension markdown export",
+  "type": "module",
+  "scripts": {
+    "test": "node test/runner.mjs",
+    "test:infra": "node test/runner.mjs --infra",
+    "test:helpers": "node test/runner.mjs --helpers",
+    "test:integration": "node test/runner.mjs --integration"
+  },
+  "keywords": [
+    "chatgpt",
+    "exporter",
+    "obsidian",
+    "markdown"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
