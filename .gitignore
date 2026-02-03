@@ -1,6 +1,7 @@
 chatgpt-exporter/
 Obsidian/
 test-exports-and-logs/
+test-vault/
 
 # IDE
 .idea
