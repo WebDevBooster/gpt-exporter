@@ -419,6 +419,49 @@ async function runHelperTests() {
         assertEqual(result, 'all-caps-project');
     });
 
+    // Feature #14: sanitizeProjectTag removes special characters and collapses hyphens
+    await test('sanitizeProjectTag removes special characters &#!,;$£', () => {
+        // Test the exact characters mentioned in the feature
+        const result = sanitizeProjectTag('test&#!,;$£end');
+        assertEqual(result, 'testend', 'All special characters should be removed');
+    });
+
+    await test('sanitizeProjectTag collapses multiple hyphens to single', () => {
+        const result = sanitizeProjectTag('a---b----c');
+        assertEqual(result, 'a-b-c', 'Multiple consecutive hyphens should collapse to single');
+    });
+
+    await test('sanitizeProjectTag removes leading hyphens', () => {
+        const result = sanitizeProjectTag('---test');
+        assertEqual(result, 'test', 'Leading hyphens should be removed');
+    });
+
+    await test('sanitizeProjectTag removes trailing hyphens', () => {
+        const result = sanitizeProjectTag('test---');
+        assertEqual(result, 'test', 'Trailing hyphens should be removed');
+    });
+
+    await test('sanitizeProjectTag handles spec example: Tester\'s Playground for &#!,;$ Friendzss', () => {
+        const result = sanitizeProjectTag("Tester's Playground for &#!,;$ Friendzss");
+        assertEqual(result, 'tester-s-playground-for-friendzss', 'Should match expected output from spec');
+    });
+
+    await test('sanitizeProjectTag removes ampersand character', () => {
+        const result = sanitizeProjectTag('rock&roll');
+        assertEqual(result, 'rockroll', 'Ampersand should be removed');
+    });
+
+    await test('sanitizeProjectTag removes hash character', () => {
+        const result = sanitizeProjectTag('item#1');
+        assertEqual(result, 'item1', 'Hash should be removed');
+    });
+
+    await test('sanitizeProjectTag handles combined special chars and spaces creating multiple hyphens', () => {
+        // When special chars are between spaces, removal creates consecutive hyphens
+        const result = sanitizeProjectTag('hello & world');
+        assertEqual(result, 'hello-world', 'Special chars between spaces should not create double hyphens');
+    });
+
     // chronum in frontmatter tests
     await test('chronum property appears in frontmatter after model-name', () => {
         // Create a minimal conversation object
