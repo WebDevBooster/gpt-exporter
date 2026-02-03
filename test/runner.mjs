@@ -30,7 +30,8 @@ import {
     getShortConversationId,
     getChronum,
     extractBranchingInfo,
-    generateFilename
+    generateFilename,
+    formatUserContentAsCallout
 } from '../export/markdown.js';
 
 /**
@@ -1720,6 +1721,138 @@ async function runHelperTests() {
             'All properties should be in frontmatter');
         assert(typeIndex < modelNameIndex && modelNameIndex < chronumIndex,
             'Property order should be: type, model-name, chronum');
+    });
+
+    // Feature #37: Callouts for user questions tests
+    await test('Feature #37: formatUserContentAsCallout prefixes simple text with "> "', () => {
+        const input = 'Hello, world!';
+        const result = formatUserContentAsCallout(input);
+        assertEqual(result, '> Hello, world!', 'Should prefix single line with "> "');
+    });
+
+    await test('Feature #37: formatUserContentAsCallout handles multiline text', () => {
+        const input = 'Line 1\nLine 2\nLine 3';
+        const result = formatUserContentAsCallout(input);
+        assertEqual(result, '> Line 1\n> Line 2\n> Line 3', 'Should prefix each line with "> "');
+    });
+
+    await test('Feature #37: formatUserContentAsCallout preserves empty lines with "> "', () => {
+        const input = 'Before\n\nAfter';
+        const result = formatUserContentAsCallout(input);
+        assertEqual(result, '> Before\n> \n> After', 'Empty lines should become "> "');
+    });
+
+    await test('Feature #37: formatUserContentAsCallout does NOT prefix code fence content', () => {
+        const input = 'Before code\n```\ncode line 1\ncode line 2\n```\nAfter code';
+        const result = formatUserContentAsCallout(input);
+        // Code fence block (including markers) should NOT be prefixed
+        const expected = '> Before code\n```\ncode line 1\ncode line 2\n```\n> After code';
+        assertEqual(result, expected, 'Code fence content should not be prefixed');
+    });
+
+    await test('Feature #37: formatUserContentAsCallout handles code fence with language tag', () => {
+        const input = 'Text\n```javascript\nconst x = 1;\n```\nMore text';
+        const result = formatUserContentAsCallout(input);
+        const expected = '> Text\n```javascript\nconst x = 1;\n```\n> More text';
+        assertEqual(result, expected, 'Code fence with language tag should not be prefixed');
+    });
+
+    await test('Feature #37: formatUserContentAsCallout handles inline code (does not affect prefixing)', () => {
+        const input = 'Use `code` in text';
+        const result = formatUserContentAsCallout(input);
+        assertEqual(result, '> Use `code` in text', 'Inline code does not affect line prefix');
+    });
+
+    await test('Feature #37: formatUserContentAsCallout handles nested quotes in user content', () => {
+        // Per feature spec: nested blockquotes get double prefix > >
+        const input = 'Quote:\n> Someone said this';
+        const result = formatUserContentAsCallout(input);
+        assertEqual(result, '> Quote:\n> > Someone said this', 'Nested quotes should get double prefix');
+    });
+
+    await test('Feature #37: user messages use > [!me:] header format', () => {
+        const conv = {
+            title: 'Test',
+            conversation_id: '12345678-test',
+            mapping: {
+                'root': { id: 'root', children: ['msg1'] },
+                'msg1': {
+                    id: 'msg1',
+                    parent: 'root',
+                    message: {
+                        author: { role: 'user' },
+                        content: { content_type: 'text', parts: ['Hello'] }
+                    }
+                }
+            },
+            current_node: 'msg1'
+        };
+        const result = conversationToMarkdown(conv);
+        assert(result.content.includes('> [!me:]'), 'User message should have > [!me:] header');
+        assert(result.content.includes('> Hello'), 'User content should be prefixed');
+    });
+
+    await test('Feature #37: assistant messages still use #### ChatGPT: format', () => {
+        const conv = {
+            title: 'Test',
+            conversation_id: '12345678-test',
+            mapping: {
+                'root': { id: 'root', children: ['msg1'] },
+                'msg1': {
+                    id: 'msg1',
+                    parent: 'root',
+                    message: {
+                        author: { role: 'assistant' },
+                        content: { content_type: 'text', parts: ['Response'] }
+                    }
+                }
+            },
+            current_node: 'msg1'
+        };
+        const result = conversationToMarkdown(conv);
+        assert(result.content.includes('#### ChatGPT:'), 'Assistant message should still use #### ChatGPT: format');
+    });
+
+    await test('Feature #37: test-vault files use callout format for user messages', () => {
+        // Verify test-vault expected files have callout format
+        const testFile = join(projectRoot, 'test-vault', "Tëster's_Pläýground_for_&#!,;$£_Frieñd̄žß", 'Unusual_Adjective_6981fddd.md');
+        const content = readFileSync(testFile, 'utf8');
+
+        assert(content.includes('> [!me:]'), 'Test-vault should have > [!me:] callout header');
+        assert(content.includes('> Reply with one word'), 'Test-vault should have prefixed user content');
+        assert(!content.includes('#### You:'), 'Test-vault should NOT have #### You: format anymore');
+    });
+
+    await test('Feature #37: handles empty content gracefully', () => {
+        const result = formatUserContentAsCallout('');
+        assertEqual(result, '', 'Empty string should return empty string');
+    });
+
+    await test('Feature #37: handles null/undefined content gracefully', () => {
+        const result1 = formatUserContentAsCallout(null);
+        const result2 = formatUserContentAsCallout(undefined);
+        assertEqual(result1, '', 'null should return empty string');
+        assertEqual(result2, '', 'undefined should return empty string');
+    });
+
+    await test('Feature #37: spec example 1 - simple question output', () => {
+        // Per spec: "What do you call those things that create characters like..."
+        const input = 'What do you call those things that create characters like:\nä, ö, ü, à, ̣a, á and all the other non-standard characters for European languages?';
+        const result = formatUserContentAsCallout(input);
+        const expected = '> What do you call those things that create characters like:\n> ä, ö, ü, à, ̣a, á and all the other non-standard characters for European languages?';
+        assertEqual(result, expected, 'Simple question should be formatted correctly');
+    });
+
+    await test('Feature #37: spec example 2 - code fence handling', () => {
+        // Per spec example with HTML code fence
+        const input = 'This is just a quick test\nwith code fences:\n```\n<!DOCTYPE html>\n<html lang="en">\n</html>\n```\nAnd some inline code: `<!DOCTYPE html>`';
+        const result = formatUserContentAsCallout(input);
+        // Code fence content (including markers) should NOT be prefixed
+        // But content before and after should be prefixed
+        assert(result.includes('> This is just a quick test'), 'Text before code fence should be prefixed');
+        assert(result.includes('```\n<!DOCTYPE html>'), 'Opening fence and code should not be prefixed');
+        assert(result.includes('</html>\n```'), 'Closing fence should not be prefixed');
+        assert(result.includes('> And some inline code:'), 'Text after code fence should be prefixed');
     });
 }
 

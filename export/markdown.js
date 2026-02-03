@@ -176,6 +176,58 @@ function generateFilename(title, conversationId) {
 }
 
 /**
+ * Format user content as an Obsidian callout
+ * Prefixes each line with `> ` (angle bracket + space) EXCEPT lines inside code fences.
+ * The callout header `> [!me:]` is NOT added by this function - it's added by the caller.
+ *
+ * Rules:
+ * - Lines outside code fences get `> ` prefix
+ * - Lines inside code fences (``` ... ```) are NOT prefixed (entire code block is exempt)
+ * - The opening and closing ``` markers are also NOT prefixed
+ * - Inline code (`code`) does NOT affect prefixing (it's still inside a line)
+ * - Empty lines inside callouts become `> ` (just angle bracket + space)
+ * - Nested blockquotes in user content get double prefix: `> > `
+ *
+ * @param {string} content - The user message content
+ * @returns {string} Content formatted for Obsidian callout (without header)
+ */
+function formatUserContentAsCallout(content) {
+    if (!content) return '';
+
+    const lines = content.split('\n');
+    const result = [];
+    let insideCodeFence = false;
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+
+        // Check if this line starts or ends a code fence
+        // Code fence starts with ``` at the beginning of the line (possibly with language tag)
+        const isCodeFenceMarker = /^```/.test(line.trim());
+
+        if (isCodeFenceMarker) {
+            if (!insideCodeFence) {
+                // Entering code fence - do NOT prefix the opening fence marker
+                result.push(line);
+                insideCodeFence = true;
+            } else {
+                // Exiting code fence - do NOT prefix the closing fence marker
+                result.push(line);
+                insideCodeFence = false;
+            }
+        } else if (insideCodeFence) {
+            // Inside code fence - no prefix
+            result.push(line);
+        } else {
+            // Outside code fence - add `> ` prefix
+            result.push('> ' + line);
+        }
+    }
+
+    return result.join('\n');
+}
+
+/**
  * Extract 10-digit integer from create_time timestamp
  * The create_time is a Unix timestamp in seconds with decimal places
  *
@@ -629,8 +681,13 @@ function conversationToMarkdown(conversation) {
     // Build message content
     const messages = extractMessages(conversation);
     const messageBlocks = messages.map(msg => {
-        const header = msg.role === 'user' ? '#### You:' : '#### ChatGPT:';
-        return `${header}\n${msg.content}`;
+        if (msg.role === 'user') {
+            // Format user messages as Obsidian callouts
+            const calloutContent = formatUserContentAsCallout(msg.content);
+            return `> [!me:]\n${calloutContent}`;
+        } else {
+            return `#### ChatGPT:\n${msg.content}`;
+        }
     });
 
     // Combine everything
@@ -669,5 +726,6 @@ export {
     getShortConversationId,
     getChronum,
     extractBranchingInfo,
-    generateFilename
+    generateFilename,
+    formatUserContentAsCallout
 };
