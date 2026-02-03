@@ -1327,6 +1327,137 @@ async function runHelperTests() {
         assert(content.includes('model-name:'),
             'Generated content should have model-name: property');
     });
+
+    // Feature #32: model-name property is retained in frontmatter
+    await test('Feature #32: model-name property IS retained in frontmatter', () => {
+        const conversation = {
+            title: 'Test Conversation',
+            create_time: 1770126827.760625,
+            update_time: 1770126833.018922,
+            conversation_id: '6981fddd-2834-8394-9b08-a9b19891753c',
+            mapping: {
+                'node1': {
+                    message: {
+                        metadata: {
+                            model_slug: 'gpt-5-2-thinking'
+                        }
+                    }
+                }
+            }
+        };
+
+        const result = conversationToMarkdown(conversation);
+        const content = result.content;
+
+        // Should have 'model-name:' property with the slug value
+        assert(content.includes('model-name: gpt-5-2-thinking'),
+            'Frontmatter should contain model-name: gpt-5-2-thinking');
+    });
+
+    await test('Feature #32: model-name appears BEFORE chronum in property order', () => {
+        const conversation = {
+            title: 'Test Conversation',
+            create_time: 1770126827.760625,
+            update_time: 1770126833.018922,
+            conversation_id: '6981fddd-2834-8394-9b08-a9b19891753c',
+            mapping: {
+                'node1': {
+                    message: {
+                        metadata: {
+                            model_slug: 'gpt-4'
+                        }
+                    }
+                }
+            }
+        };
+
+        const result = conversationToMarkdown(conversation);
+        const content = result.content;
+
+        // Verify model-name appears before chronum
+        const modelNameIndex = content.indexOf('model-name:');
+        const chronumIndex = content.indexOf('chronum:');
+
+        assert(modelNameIndex > 0, 'model-name should be in frontmatter');
+        assert(chronumIndex > 0, 'chronum should be in frontmatter');
+        assert(modelNameIndex < chronumIndex,
+            'model-name should appear BEFORE chronum in property order');
+    });
+
+    await test('Feature #32: model-name appears AFTER type in property order', () => {
+        const conversation = {
+            title: 'Test Conversation',
+            create_time: 1770126827.760625,
+            update_time: 1770126833.018922,
+            conversation_id: '6981fddd-2834-8394-9b08-a9b19891753c',
+            mapping: {
+                'node1': {
+                    message: {
+                        metadata: {
+                            model_slug: 'gpt-4'
+                        }
+                    }
+                }
+            }
+        };
+
+        const result = conversationToMarkdown(conversation);
+        const content = result.content;
+
+        // Verify model-name appears after type
+        const typeIndex = content.indexOf('type:');
+        const modelNameIndex = content.indexOf('model-name:');
+
+        assert(typeIndex > 0, 'type should be in frontmatter');
+        assert(modelNameIndex > 0, 'model-name should be in frontmatter');
+        assert(modelNameIndex > typeIndex,
+            'model-name should appear AFTER type in property order');
+    });
+
+    await test('Feature #32: test-vault files have model-name in correct position', () => {
+        // Read expected test-vault file
+        const expectedPath = join(projectRoot, 'test-vault', 'English_Checking_&_Tutoring', 'Diacritics_and_Accents_698065a8.md');
+        const content = readFileSync(expectedPath, 'utf8');
+
+        // Should have 'model-name:' property
+        assert(content.includes('model-name: gpt-5-2-thinking'),
+            'Test-vault file should have model-name: gpt-5-2-thinking');
+
+        // Verify property order: type, model-name, chronum
+        const typeIndex = content.indexOf('type:');
+        const modelNameIndex = content.indexOf('model-name:');
+        const chronumIndex = content.indexOf('chronum:');
+
+        assert(typeIndex > 0, 'type should be in frontmatter');
+        assert(modelNameIndex > 0, 'model-name should be in frontmatter');
+        assert(chronumIndex > 0, 'chronum should be in frontmatter');
+
+        assert(modelNameIndex > typeIndex,
+            'model-name should come after type');
+        assert(modelNameIndex < chronumIndex,
+            'model-name should come before chronum');
+    });
+
+    await test('Feature #32: generated frontmatter matches test-vault model-name property', () => {
+        // Load actual mock conversation
+        const testFile = join(projectRoot, 'test-exports-and-logs', '4-branching-conversations_for_mock_API.json');
+        const conversations = loadUTF16LEJson(testFile);
+        const conv = conversations.find(c => c.conversation_id === '698065a8-9160-8392-a810-0ae50700979b');
+        assert(conv, 'Should find test conversation');
+
+        const result = conversationToMarkdown(conv);
+        const content = result.content;
+
+        // Verify model-name is present and in correct order
+        const typeIndex = content.indexOf('type:');
+        const modelNameIndex = content.indexOf('model-name:');
+        const chronumIndex = content.indexOf('chronum:');
+
+        assert(typeIndex > 0 && modelNameIndex > 0 && chronumIndex > 0,
+            'All properties should be in frontmatter');
+        assert(typeIndex < modelNameIndex && modelNameIndex < chronumIndex,
+            'Property order should be: type, model-name, chronum');
+    });
 }
 
 /**
