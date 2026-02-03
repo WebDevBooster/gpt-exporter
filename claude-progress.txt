@@ -52,3 +52,46 @@
 
 ### Git Commits
 - 0b58712: feat: enhance test infrastructure for features #1, #2, #3
+
+---
+
+## Session 2 (Agent Batch #4-6) - 2026-02-03
+
+### Features Completed This Session: 3
+
+#### Feature #4: getChronum extracts 10-digit integer from create_time
+- Status: PASSED
+- Implementation: `getChronum()` function in export/markdown.js
+- Extracts integer portion from Unix timestamp (e.g., 1770126827.760625 → 1770126827)
+- Handles floats, integers, null, undefined, and string inputs
+
+#### Feature #5: chronum property appears in frontmatter after model-name
+- Status: PASSED
+- Modified `conversationToMarkdown()` to include chronum property
+- Property order: model-name, chronum, created
+- Removed "model" display name property per spec (Modification #8)
+
+#### Feature #6: chronum handles missing create_time gracefully
+- Status: PASSED
+- Returns null for null/undefined inputs
+- Frontmatter shows "chronum: null" when create_time is missing
+- Also implemented `getShortConversationId()` helper
+
+### Current Progress
+- Passing: 7/35 features (20%)
+- In Progress: 3 features (other agents)
+- Remaining: 25 features
+
+### Test Results
+- All 22+ tests passing
+- Infrastructure tests: ✓
+- Helper function tests: ✓
+- Integration tests: ✓
+
+### Files Modified
+- export/markdown.js: Added getChronum, getShortConversationId, updated frontmatter
+- test/runner.mjs: Added tests for new helper functions and frontmatter
+
+### Git Commits Made This Session
+1. d5c766b: feat: add getChronum and getShortConversationId helper functions
+2. ee8dd7e: feat: add chronum property to frontmatter after model-name
