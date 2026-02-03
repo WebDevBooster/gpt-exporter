@@ -791,6 +791,70 @@ async function runHelperTests() {
         assert(parentIndex > aliasesIndex, 'parent should come after aliases');
         assert(parentIndex < typeIndex, 'parent should come before type');
     });
+
+    // Feature #18: Parent property shows Obsidian internal link when parent exists
+    await test('parent property shows Obsidian internal link when parent exists', () => {
+        // Load branching conversations from test data
+        const testFile = join(projectRoot, 'test-exports-and-logs', '4-branching-conversations_for_mock_API.json');
+        const conversations = loadUTF16LEJson(testFile);
+
+        // Find the branch conversation (has parent: "Diacritics and Accents")
+        const branchConv = conversations.find(c => c.conversation_id === '6981255a-0c54-8393-9176-98d226ea8c0c');
+        assert(branchConv, 'Should find the branch conversation');
+
+        const result = conversationToMarkdown(branchConv);
+        const content = result.content;
+
+        // Should have parent property with internal link
+        assert(content.includes('parent:\n  - "[[Diacritics_and_Accents_698065a8]]"'),
+            'Should have parent property with Obsidian internal link');
+    });
+
+    await test('parent internal link format is [[filename_without_extension]]', () => {
+        // Create a conversation with mock branching info
+        const conversation = {
+            title: 'Branch Conversation',
+            create_time: 1770071387,
+            update_time: 1770071426.426,
+            conversation_id: '6981255a-0c54-8393-9176-98d226ea8c0c',
+            mapping: {
+                'test-node': {
+                    message: {
+                        metadata: {
+                            branching_from_conversation_id: '698065a8-9160-8392-a810-0ae50700979b',
+                            branching_from_conversation_title: 'Diacritics and Accents'
+                        }
+                    }
+                }
+            }
+        };
+
+        const result = conversationToMarkdown(conversation);
+        const content = result.content;
+
+        // Parent link should use [[]] format with filename (no .md extension)
+        assert(content.includes('"[[Diacritics_and_Accents_698065a8]]"'),
+            'Parent link should be in [[filename]] format without .md extension');
+        assert(!content.includes('.md]]'), 'Parent link should NOT include .md extension');
+    });
+
+    await test('parent property format matches expected output from spec', () => {
+        // Load branching conversations from test data
+        const testFile = join(projectRoot, 'test-exports-and-logs', '4-branching-conversations_for_mock_API.json');
+        const conversations = loadUTF16LEJson(testFile);
+
+        // Find the branch conversation
+        const branchConv = conversations.find(c => c.conversation_id === '6981255a-0c54-8393-9176-98d226ea8c0c');
+        assert(branchConv, 'Should find the branch conversation');
+
+        const result = conversationToMarkdown(branchConv);
+        const content = result.content;
+
+        // Verify the exact YAML format with indentation
+        const expectedParentFormat = 'parent:\n  - "[[Diacritics_and_Accents_698065a8]]"';
+        assert(content.includes(expectedParentFormat),
+            'Parent property should match exact YAML list format with internal link');
+    });
 }
 
 /**
