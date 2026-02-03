@@ -31,7 +31,8 @@ import {
     getChronum,
     extractBranchingInfo,
     generateFilename,
-    formatUserContentAsCallout
+    formatUserContentAsCallout,
+    escapeHexColorCodes
 } from '../export/markdown.js';
 
 /**
@@ -2043,6 +2044,200 @@ async function runHelperTests() {
             'Spec example: JSON query should be wrapped in code fences');
         assert(result.content.includes('#### ChatGPT:\nSecond message.'),
             'Spec example: Second ChatGPT message should be normal');
+    });
+
+    // ============================================================
+    // Feature #39: Escape hashtags in hex color codes for markdown output
+    // ============================================================
+
+    await test('Feature #39: escapeHexColorCodes escapes 3-digit hex color', () => {
+        const input = 'The color is #ccc and #fff';
+        const result = escapeHexColorCodes(input);
+        assertEqual(result, 'The color is \\#ccc and \\#fff');
+    });
+
+    await test('Feature #39: escapeHexColorCodes escapes 6-digit hex color', () => {
+        const input = 'Use #4a2e32 or #3E393A as the background';
+        const result = escapeHexColorCodes(input);
+        assertEqual(result, 'Use \\#4a2e32 or \\#3E393A as the background');
+    });
+
+    await test('Feature #39: escapeHexColorCodes escapes 8-digit hex color (with alpha)', () => {
+        const input = 'Transparent red is #FF0000FF and #00000080';
+        const result = escapeHexColorCodes(input);
+        assertEqual(result, 'Transparent red is \\#FF0000FF and \\#00000080');
+    });
+
+    await test('Feature #39: escapeHexColorCodes escapes 4-digit hex color (shorthand with alpha)', () => {
+        const input = 'The color #fcba has alpha';
+        const result = escapeHexColorCodes(input);
+        assertEqual(result, 'The color \\#fcba has alpha');
+    });
+
+    await test('Feature #39: escapeHexColorCodes does NOT escape inside code fences', () => {
+        const input = 'Text before\n```\n#ff0000\n#ccc\n```\nText after';
+        const result = escapeHexColorCodes(input);
+        // #ff0000 and #ccc inside code fences should NOT be escaped
+        assertEqual(result, 'Text before\n```\n#ff0000\n#ccc\n```\nText after');
+    });
+
+    await test('Feature #39: escapeHexColorCodes does NOT escape inside inline backticks', () => {
+        const input = 'Use `#ff0000` for red and #00ff00 for green';
+        const result = escapeHexColorCodes(input);
+        // #ff0000 inside backticks should NOT be escaped, but #00ff00 should be
+        assertEqual(result, 'Use `#ff0000` for red and \\#00ff00 for green');
+    });
+
+    await test('Feature #39: escapeHexColorCodes handles multiple inline backticks on same line', () => {
+        const input = 'Colors: `#aaa`, `#bbb`, and #ccc';
+        const result = escapeHexColorCodes(input);
+        // #aaa and #bbb in backticks should NOT be escaped, #ccc should be
+        assertEqual(result, 'Colors: `#aaa`, `#bbb`, and \\#ccc');
+    });
+
+    await test('Feature #39: escapeHexColorCodes does NOT escape non-hex hash patterns', () => {
+        const input = 'Hashtag #hashtag and heading #1 are not colors';
+        const result = escapeHexColorCodes(input);
+        // #hashtag and #1 are not hex color patterns, should remain unchanged
+        assertEqual(result, 'Hashtag #hashtag and heading #1 are not colors');
+    });
+
+    await test('Feature #39: escapeHexColorCodes handles empty string', () => {
+        const result = escapeHexColorCodes('');
+        assertEqual(result, '');
+    });
+
+    await test('Feature #39: escapeHexColorCodes handles null', () => {
+        const result = escapeHexColorCodes(null);
+        assertEqual(result, null);
+    });
+
+    await test('Feature #39: escapeHexColorCodes handles undefined', () => {
+        const result = escapeHexColorCodes(undefined);
+        assertEqual(result, undefined);
+    });
+
+    await test('Feature #39: hex colors in ChatGPT messages are escaped in markdown output', () => {
+        const conv = {
+            title: 'Color Test',
+            conversation_id: 'testcolor-0001',
+            create_time: 1770126827.760625,
+            update_time: 1770126827.760625,
+            mapping: {
+                'root': { id: 'root', message: null, parent: undefined, children: ['user1'] },
+                'user1': { id: 'user1', parent: 'root', children: ['assistant1'],
+                    message: { author: { role: 'user' }, content: { content_type: 'text', parts: ['What color should I use?'] } }
+                },
+                'assistant1': { id: 'assistant1', parent: 'user1', children: [],
+                    message: { author: { role: 'assistant' }, content: { content_type: 'text', parts: ['Try #ff0000 for red or #00ff00 for green.'] } }
+                }
+            },
+            current_node: 'assistant1'
+        };
+
+        const result = conversationToMarkdown(conv);
+
+        // Hex colors should be escaped in the output
+        assert(result.content.includes('\\#ff0000'), 'Should escape #ff0000 to \\#ff0000');
+        assert(result.content.includes('\\#00ff00'), 'Should escape #00ff00 to \\#00ff00');
+    });
+
+    await test('Feature #39: hex colors inside code fences in ChatGPT messages are NOT escaped', () => {
+        const conv = {
+            title: 'Code Color Test',
+            conversation_id: 'testcode-0002',
+            create_time: 1770126827.760625,
+            update_time: 1770126827.760625,
+            mapping: {
+                'root': { id: 'root', message: null, parent: undefined, children: ['user1'] },
+                'user1': { id: 'user1', parent: 'root', children: ['assistant1'],
+                    message: { author: { role: 'user' }, content: { content_type: 'text', parts: ['Show me CSS code'] } }
+                },
+                'assistant1': { id: 'assistant1', parent: 'user1', children: [],
+                    message: { author: { role: 'assistant' }, content: { content_type: 'text', parts: ['Here is the CSS:\n```css\nbody { color: #333; }\n```'] } }
+                }
+            },
+            current_node: 'assistant1'
+        };
+
+        const result = conversationToMarkdown(conv);
+
+        // Hex color inside code fence should NOT be escaped
+        assert(result.content.includes('color: #333;'), 'Should NOT escape #333 inside code fence');
+        assert(!result.content.includes('color: \\#333;'), 'Should NOT have \\#333 inside code fence');
+    });
+
+    await test('Feature #39: hex colors inside inline code are NOT escaped', () => {
+        const conv = {
+            title: 'Inline Code Color Test',
+            conversation_id: 'testinline-0003',
+            create_time: 1770126827.760625,
+            update_time: 1770126827.760625,
+            mapping: {
+                'root': { id: 'root', message: null, parent: undefined, children: ['user1'] },
+                'user1': { id: 'user1', parent: 'root', children: ['assistant1'],
+                    message: { author: { role: 'user' }, content: { content_type: 'text', parts: ['How do I write red?'] } }
+                },
+                'assistant1': { id: 'assistant1', parent: 'user1', children: [],
+                    message: { author: { role: 'assistant' }, content: { content_type: 'text', parts: ['Use `#ff0000` in CSS. The color #ff0000 is bright red.'] } }
+                }
+            },
+            current_node: 'assistant1'
+        };
+
+        const result = conversationToMarkdown(conv);
+
+        // First #ff0000 in backticks should NOT be escaped
+        assert(result.content.includes('`#ff0000`'), 'Should NOT escape #ff0000 inside backticks');
+        // Second #ff0000 outside backticks SHOULD be escaped
+        assert(result.content.includes('The color \\#ff0000 is bright red'), 'Should escape #ff0000 outside backticks');
+    });
+
+    await test('Feature #39: spec example - colors outside code should be escaped', () => {
+        // Test the exact examples from the feature description
+        const input = '#ccc\n#4a2e32\n#3E393A\n#FF0000FF';
+        const result = escapeHexColorCodes(input);
+        assertEqual(result, '\\#ccc\n\\#4a2e32\n\\#3E393A\n\\#FF0000FF');
+    });
+
+    await test('Feature #39: runs AFTER Feature #38 JSON code fence wrapping', () => {
+        // When a JSON message is wrapped in code fences by Feature #38,
+        // hex colors in that JSON should NOT be escaped
+        const conv = {
+            title: 'JSON with Color',
+            conversation_id: 'testjson-color',
+            create_time: 1770126827.760625,
+            update_time: 1770126827.760625,
+            mapping: {
+                'root': { id: 'root', message: null, parent: undefined, children: ['user1'] },
+                'user1': { id: 'user1', parent: 'root', children: ['assistant1'],
+                    message: { author: { role: 'user' }, content: { content_type: 'text', parts: ['Get color config'] } }
+                },
+                'assistant1': { id: 'assistant1', parent: 'user1', children: ['assistant2'],
+                    message: { author: { role: 'assistant' }, content: { content_type: 'text', parts: ['{"color":"#ff0000"}'] } }
+                },
+                'assistant2': { id: 'assistant2', parent: 'assistant1', children: [],
+                    message: { author: { role: 'assistant' }, content: { content_type: 'text', parts: ['The primary color is #ff0000 (red).'] } }
+                }
+            },
+            current_node: 'assistant2'
+        };
+
+        const result = conversationToMarkdown(conv);
+
+        // JSON message should be in code fences (Feature #38) and color should NOT be escaped
+        assert(result.content.includes('```\n{"color":"#ff0000"}\n```'),
+            'JSON with color should be in code fences and color should NOT be escaped');
+        // But color in regular message SHOULD be escaped
+        assert(result.content.includes('The primary color is \\#ff0000 (red)'),
+            'Color in regular message should be escaped');
+    });
+
+    await test('Feature #39: handles tilde code fences (~~~)', () => {
+        const input = 'Before\n~~~\n#ff0000\n~~~\nAfter #ff0000';
+        const result = escapeHexColorCodes(input);
+        // Color inside ~~~ fence should NOT be escaped, outside should be escaped
+        assertEqual(result, 'Before\n~~~\n#ff0000\n~~~\nAfter \\#ff0000');
     });
 }
 

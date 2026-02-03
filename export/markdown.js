@@ -176,6 +176,73 @@ function generateFilename(title, conversationId) {
 }
 
 /**
+ * Escape hashtags in hex color codes that are NOT inside code fences or inline backticks.
+ * This prevents Obsidian from treating hex color codes like #ccc or #FF0000 as tags.
+ *
+ * Supported formats:
+ * - 3-character hex: #ccc, #abc
+ * - 6-character hex: #4a2e32, #3E393A, #FF0000
+ * - 8-character hex (with alpha): #FF0000FF, #00000080
+ *
+ * @param {string} text - The text to process
+ * @returns {string} Text with hex color codes escaped (# -> \#)
+ */
+function escapeHexColorCodes(text) {
+    if (!text) return text;
+
+    // Regex to match hex color codes: # followed by 3, 4, 6, or 8 hex digits
+    // 3 digits: #RGB (shorthand)
+    // 4 digits: #RGBA (shorthand with alpha)
+    // 6 digits: #RRGGBB (standard)
+    // 8 digits: #RRGGBBAA (with alpha)
+    // We need word boundary or non-hex char after to avoid matching longer sequences
+    const hexColorPattern = /#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})(?![0-9A-Fa-f])/g;
+
+    const lines = text.split('\n');
+    const result = [];
+    let insideCodeFence = false;
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+
+        // Check if this line is a code fence marker
+        const isCodeFenceMarker = /^```/.test(line.trim()) || /^~~~/.test(line.trim());
+
+        if (isCodeFenceMarker) {
+            if (!insideCodeFence) {
+                // Entering code fence
+                insideCodeFence = true;
+            } else {
+                // Exiting code fence
+                insideCodeFence = false;
+            }
+            result.push(line);
+        } else if (insideCodeFence) {
+            // Inside code fence - don't escape
+            result.push(line);
+        } else {
+            // Outside code fence - need to escape hex colors BUT NOT those in inline backticks
+            // Strategy: Split by backticks, only process non-code segments
+            const segments = line.split(/(`[^`]*`)/g);
+            const processedSegments = segments.map((segment, idx) => {
+                // Odd indices are the backtick-enclosed parts (the captured groups)
+                // Actually with split on capturing group, the captured content is at odd indices
+                if (segment.startsWith('`') && segment.endsWith('`')) {
+                    // This is inline code - don't escape
+                    return segment;
+                } else {
+                    // This is regular text - escape hex color codes
+                    return segment.replace(hexColorPattern, '\\#$1');
+                }
+            });
+            result.push(processedSegments.join(''));
+        }
+    }
+
+    return result.join('\n');
+}
+
+/**
  * Format user content as an Obsidian callout
  * Prefixes each line with `> ` (angle bracket + space) EXCEPT lines inside code fences.
  * The callout header `> [!me:]` is NOT added by this function - it's added by the caller.
@@ -701,13 +768,17 @@ function conversationToMarkdown(conversation) {
     });
 
     // Combine everything
-    const markdown = [
+    let markdown = [
         frontmatter,
         '',
         `# ${title}`,
         '',
         messageBlocks.join('\n\n')
     ].join('\n');
+
+    // Feature #39: Escape hex color codes in markdown content (after all other transformations)
+    // This must run AFTER Feature #38 (JSON code fences) so we don't escape colors in code blocks
+    markdown = escapeHexColorCodes(markdown);
 
     // Build file path with project folder if applicable
     // Use generateFilename for consistency with parent links
@@ -737,5 +808,6 @@ export {
     getChronum,
     extractBranchingInfo,
     generateFilename,
-    formatUserContentAsCallout
+    formatUserContentAsCallout,
+    escapeHexColorCodes
 };
