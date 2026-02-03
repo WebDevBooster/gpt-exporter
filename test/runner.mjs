@@ -672,6 +672,21 @@ async function runHelperTests() {
         assertEqual(result.filename, 'Diacritics_and_Accents_698065a8.md', 'Filename should match expected format');
     });
 
+    // Feature #23: Verify exact output filename from spec
+    await test('output filename: Unusual_Adjective_6981fddd.md (spec requirement)', () => {
+        const conversation = {
+            title: 'Unusual Adjective',
+            create_time: 1770126827.760625,
+            update_time: 1770126833.018922,
+            conversation_id: '6981fddd-2834-8394-9b08-a9b19891753c',
+            mapping: {}
+        };
+
+        const result = conversationToMarkdown(conversation);
+        assertEqual(result.filename, 'Unusual_Adjective_6981fddd.md',
+            'Output filename must match spec example exactly');
+    });
+
     // Test that project conversations also use generateFilename
     await test('conversationToMarkdown with project uses generateFilename', () => {
         const conversation = {
