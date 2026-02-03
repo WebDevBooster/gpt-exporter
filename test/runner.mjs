@@ -24,7 +24,9 @@ import {
     sanitizeFilename,
     conversationToMarkdown,
     extractMessages,
-    formatDate
+    formatDate,
+    getShortConversationId,
+    getChronum
 } from '../export/markdown.js';
 
 /**
@@ -229,6 +231,48 @@ async function runHelperTests() {
         const result = sanitizeFilename('Test: File?');
         assert(!result.includes(':'), 'Should not contain colon');
         assert(!result.includes('?'), 'Should not contain question mark');
+    });
+
+    // getChronum tests
+    await test('getChronum extracts 10-digit integer from create_time', () => {
+        const result = getChronum(1770126827.760625);
+        assertEqual(result, 1770126827);
+    });
+
+    await test('getChronum handles integer input', () => {
+        const result = getChronum(1770126827);
+        assertEqual(result, 1770126827);
+    });
+
+    await test('getChronum returns null for null input', () => {
+        const result = getChronum(null);
+        assertEqual(result, null);
+    });
+
+    await test('getChronum returns null for undefined input', () => {
+        const result = getChronum(undefined);
+        assertEqual(result, null);
+    });
+
+    await test('getChronum handles string number input', () => {
+        const result = getChronum('1770126827.760625');
+        assertEqual(result, 1770126827);
+    });
+
+    // getShortConversationId tests
+    await test('getShortConversationId extracts first 8 characters', () => {
+        const result = getShortConversationId('6981fddd-2834-8394-9b08-a9b19891753c');
+        assertEqual(result, '6981fddd');
+    });
+
+    await test('getShortConversationId returns empty string for null', () => {
+        const result = getShortConversationId(null);
+        assertEqual(result, '');
+    });
+
+    await test('getShortConversationId returns empty string for undefined', () => {
+        const result = getShortConversationId(undefined);
+        assertEqual(result, '');
     });
 }
 

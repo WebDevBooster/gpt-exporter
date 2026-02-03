@@ -1,0 +1,347 @@
+<project_specification>
+  <project_name>GPT Exporter - Frontmatter Enhancement</project_name>
+
+  <overview>
+    Modify an existing Chrome browser extension (GPT Exporter) that exports ChatGPT conversations
+    to Obsidian-compatible Markdown files. This project involves 8 specific modifications to the
+    markdown export functionality to improve frontmatter format, add unique identifiers, support
+    parent-child conversation relationships, and ensure proper tag sanitization.
+  </overview>
+
+  <project_type>existing_codebase_modification</project_type>
+
+  <technology_stack>
+    <runtime>Chrome Extension (Manifest V3)</runtime>
+    <language>JavaScript (ES Modules)</language>
+    <primary_file>export/markdown.js</primary_file>
+    <related_files>
+      - background.js (orchestration)
+      - api/chatgpt.js (API interaction)
+      - sync/tracker.js (export tracking)
+    </related_files>
+  </technology_stack>
+
+  <testing_approach>
+    <strategy>Mock API Testing</strategy>
+    <description>
+      Since coding agents cannot install/run Chrome extensions, testing will use mock JSON files
+      that contain real ChatGPT API response structures. The test runner will:
+      1. Load mock JSON files from test-exports-and-logs/
+      2. Pass conversation objects through the markdown generation functions
+      3. Compare generated output against expected .md files in test-vault/
+    </description>
+    <mock_data_files>
+      - test-exports-and-logs/1-conversation_for_mock_API.json (single conversation in a project)
+      - test-exports-and-logs/3-conversations_for_mock_API.json (multiple conversations)
+      - test-exports-and-logs/4-branching-conversations_for_mock_API.json (parent-child relationships)
+    </mock_data_files>
+    <expected_output_files>
+      - test-vault/Tester's_Playground_for_&#!,;$_Friendzss/Unusual_Adjective_6981fddd.md
+      - test-vault/English_Checking_&_Tutoring/Diacritics_and_Accents_698065a8.md
+      - test-vault/English_Checking_&_Tutoring/Branch_Diacritics_and_Accents_6981255a.md
+    </expected_output_files>
+    <note>JSON files are UTF-16LE encoded with BOM - test runner must handle this encoding</note>
+  </testing_approach>
+
+  <feature_count>35</feature_count>
+
+  <modifications>
+    <modification id="1">
+      <name>Add chronum property to frontmatter</name>
+      <description>
+        Extract the 10-digit integer portion of the conversation's create_time and add it as
+        a new frontmatter property called "chronum".
+      </description>
+      <input>create_time: 1770126827.760625</input>
+      <output>chronum: 1770126827</output>
+      <location>After model-name, before created</location>
+    </modification>
+
+    <modification id="2">
+      <name>Truncate created and updated timestamps</name>
+      <description>
+        Remove seconds, milliseconds, and timezone from the created and updated timestamps.
+        Format: YYYY-MM-DDTHH:MM (no seconds, no Z suffix)
+      </description>
+      <input>created: 2026-02-03T13:53:47.760Z</input>
+      <output>created: 2026-02-03T13:53</output>
+    </modification>
+
+    <modification id="3">
+      <name>Sanitize project names to valid Obsidian tags</name>
+      <description>
+        Convert project names to valid Obsidian tags using only lowercase letters, numbers,
+        and hyphens (NO underscores). Remove or transliterate diacritics, special characters,
+        and punctuation.
+      </description>
+      <input>Tester's Playground for &#!,;$ Friendzss</input>
+      <output>tester-s-playground-for-friendzss</output>
+      <rules>
+        - Convert to lowercase
+        - Transliterate diacritics to ASCII equivalents (a, e, o, u, s, n, z, etc.)
+        - Replace spaces and apostrophes with hyphens
+        - Remove all special characters (&#!,;$, etc.)
+        - Collapse multiple consecutive hyphens to single hyphen
+        - Remove leading/trailing hyphens
+      </rules>
+    </modification>
+
+    <modification id="4">
+      <name>Add parent property with internal Obsidian link</name>
+      <description>
+        Add a "parent" property to frontmatter. If the conversation has branching_from_conversation_id
+        and branching_from_conversation_title, create an Obsidian internal link using the parent's
+        filename (without .md extension). If no parent, leave the value empty.
+      </description>
+      <input_fields>
+        - branching_from_conversation_id: "698065a8-9160-8392-a810-0ae50700979b"
+        - branching_from_conversation_title: "Diacritics and Accents"
+      </input_fields>
+      <output>
+        parent:
+          - "[[Diacritics_and_Accents_698065a8]]"
+      </output>
+      <no_parent_output>
+        parent:
+          -
+      </no_parent_output>
+      <note>Use the SAME filename generation function for both actual filenames and parent links</note>
+    </modification>
+
+    <modification id="5">
+      <name>Add unique ID suffix to filenames</name>
+      <description>
+        Append the first 8 characters of conversation_id to the filename, separated by underscore.
+        This ensures uniqueness when two conversations have identical titles.
+      </description>
+      <input>
+        - title: "Unusual Adjective"
+        - conversation_id: "6981fddd-2834-8394-9b08-a9b19891753c"
+      </input>
+      <output>Unusual_Adjective_6981fddd.md</output>
+      <note>The 8-character hex string encodes the timestamp when user submitted, always unique per user</note>
+    </modification>
+
+    <modification id="6">
+      <name>Populate aliases with ID and title+ID</name>
+      <description>
+        Add two aliases to the frontmatter:
+        1. First alias: the 8-character conversation ID
+        2. Second alias: title + space + 8-character ID
+      </description>
+      <output>
+        aliases:
+          - 6981fddd
+          - Unusual Adjective 6981fddd
+      </output>
+    </modification>
+
+    <modification id="7">
+      <name>Convert tags to YAML list format</name>
+      <description>
+        Change tags from inline format to YAML list format. "gpt-chat" is always the first tag.
+        If the conversation belongs to a project, add the sanitized project tag as the second tag.
+        Non-project conversations only have the "gpt-chat" tag.
+      </description>
+      <project_conversation>
+        tags:
+          - gpt-chat
+          - english-checking-tutoring
+      </project_conversation>
+      <non_project_conversation>
+        tags:
+          - gpt-chat
+      </non_project_conversation>
+    </modification>
+
+    <modification id="8">
+      <name>Remove model property from frontmatter</name>
+      <description>
+        Remove the "model:" property (display name like "GPT-4"). Keep only "model-name:" (slug).
+      </description>
+      <remove>model: GPT-4</remove>
+      <keep>model-name: gpt-4</keep>
+    </modification>
+  </modifications>
+
+  <frontmatter_format>
+    <example_with_parent>
+---
+title: "Branch - Diacritics and Accents"
+aliases:
+  - 6981255a
+  - Branch - Diacritics and Accents 6981255a
+parent:
+  - "[[Diacritics_and_Accents_698065a8]]"
+type: gpt-chat
+model-name: gpt-5-2-thinking
+chronum: 1770071387
+created: 2026-02-02T22:29
+updated: 2026-02-02T22:30
+tags:
+  - gpt-chat
+  - english-checking-tutoring
+project: "English Checking &amp; Tutoring"
+source: https://chatgpt.com/g/g-p-678ce30e20dc8191ab325e517603d768/c/6981255a-0c54-8393-9176-98d226ea8c0c
+---
+    </example_with_parent>
+    <example_without_parent>
+---
+title: "Unusual Adjective"
+aliases:
+  - 6981fddd
+  - Unusual Adjective 6981fddd
+parent:
+  -
+type: gpt-chat
+model-name: gpt-5-2-instant
+chronum: 1770126827
+created: 2026-02-03T13:53
+updated: 2026-02-03T13:53
+tags:
+  - gpt-chat
+  - tester-s-playground-for-friendzss
+project: "Tester's Playground for &#!,;$ Friendzss"
+source: https://chatgpt.com/g/g-p-69817ef78ab48191bc06ca7b51f5cc70/c/6981fddd-2834-8394-9b08-a9b19891753c
+---
+    </example_without_parent>
+    <property_order>
+      1. title
+      2. aliases
+      3. parent
+      4. type
+      5. model-name
+      6. chronum
+      7. created
+      8. updated
+      9. tags
+      10. project (only if conversation is in a project)
+      11. source
+    </property_order>
+  </frontmatter_format>
+
+  <helper_functions_needed>
+    <function name="getShortConversationId">
+      <purpose>Extract first 8 characters from conversation_id</purpose>
+      <input>"6981fddd-2834-8394-9b08-a9b19891753c"</input>
+      <output>"6981fddd"</output>
+    </function>
+
+    <function name="getChronum">
+      <purpose>Extract 10-digit integer from create_time timestamp</purpose>
+      <input>1770126827.760625</input>
+      <output>1770126827</output>
+    </function>
+
+    <function name="formatTruncatedDate">
+      <purpose>Format timestamp to YYYY-MM-DDTHH:MM (no seconds)</purpose>
+      <input>1770126827.760625 (Unix timestamp)</input>
+      <output>"2026-02-03T13:53"</output>
+    </function>
+
+    <function name="sanitizeProjectTag">
+      <purpose>Convert project name to valid Obsidian tag (lowercase, letters/numbers/hyphens only)</purpose>
+      <input>"Tester's Playground for &#!,;$ Friendzss"</input>
+      <output>"tester-s-playground-for-friendzss"</output>
+    </function>
+
+    <function name="generateFilename">
+      <purpose>Generate filename from title and conversation_id (used for both files and parent links)</purpose>
+      <input>title: "Diacritics and Accents", id: "698065a8-9160-8392-a810-0ae50700979b"</input>
+      <output>"Diacritics_and_Accents_698065a8"</output>
+      <note>This function is used for generating actual filenames AND for constructing parent internal links</note>
+    </function>
+
+    <function name="extractBranchingInfo">
+      <purpose>Extract parent conversation info from conversation metadata</purpose>
+      <input>conversation object with mapping containing branching_from_conversation_id/title</input>
+      <output>{ parentId: "698065a8-...", parentTitle: "Diacritics and Accents" } or null</output>
+      <note>branching info is in message metadata, not at conversation root level</note>
+    </function>
+  </helper_functions_needed>
+
+  <branching_info_location>
+    <description>
+      The branching_from_conversation_id and branching_from_conversation_title fields are located
+      INSIDE the message metadata of certain messages in the conversation mapping, NOT at the
+      root level of the conversation object.
+    </description>
+    <path>conversation.mapping[nodeId].message.metadata.branching_from_conversation_id</path>
+    <path>conversation.mapping[nodeId].message.metadata.branching_from_conversation_title</path>
+    <extraction_approach>
+      Iterate through all nodes in conversation.mapping and check each message's metadata
+      for these fields. Return the first match found.
+    </extraction_approach>
+  </branching_info_location>
+
+  <implementation_steps>
+    <step number="1">
+      <title>Create test infrastructure</title>
+      <tasks>
+        - Create test runner that can load UTF-16LE JSON files
+        - Create comparison utility for generated vs expected markdown
+        - Set up Node.js test environment that can import ES modules
+      </tasks>
+    </step>
+    <step number="2">
+      <title>Implement helper functions</title>
+      <tasks>
+        - getShortConversationId()
+        - getChronum()
+        - formatTruncatedDate()
+        - sanitizeProjectTag() with proper diacritic transliteration
+        - generateFilename() - single function for files and parent links
+        - extractBranchingInfo()
+      </tasks>
+    </step>
+    <step number="3">
+      <title>Modify conversationToMarkdown function</title>
+      <tasks>
+        - Update frontmatter generation to use new property order
+        - Add chronum property
+        - Use truncated date format
+        - Add parent property with internal link logic
+        - Update aliases format
+        - Convert tags to list format with conditional project tag
+        - Remove model property, keep model-name
+        - Update filename generation to include short ID
+      </tasks>
+    </step>
+    <step number="4">
+      <title>Update related code</title>
+      <tasks>
+        - Ensure filename changes work with ZIP bundling in background.js
+        - Ensure project folder structure still works correctly
+        - Update any code that references the old filename format
+      </tasks>
+    </step>
+    <step number="5">
+      <title>Test and validate</title>
+      <tasks>
+        - Run test suite against all mock JSON files
+        - Compare output against expected files in test-vault/
+        - Fix any discrepancies
+        - Test edge cases (no parent, no project, special characters)
+      </tasks>
+    </step>
+  </implementation_steps>
+
+  <success_criteria>
+    <functionality>
+      - All 8 modifications implemented correctly
+      - Generated markdown matches expected files in test-vault/
+      - Parent links resolve correctly in Obsidian
+      - Tags are valid Obsidian format
+    </functionality>
+    <code_quality>
+      - Helper functions are reusable and well-documented
+      - Single filename generation function used for files AND parent links
+      - No regression in existing functionality
+    </code_quality>
+    <testing>
+      - All test cases pass
+      - Edge cases handled (empty parent, no project, special characters in titles)
+      - UTF-16LE JSON files load correctly
+    </testing>
+  </success_criteria>
+</project_specification>

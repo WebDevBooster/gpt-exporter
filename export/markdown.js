@@ -31,6 +31,53 @@ function sanitizeFilename(title) {
 }
 
 /**
+ * Extract first 8 characters from conversation_id
+ * These 8 hex characters encode the timestamp when user submitted, always unique per user
+ *
+ * @param {string} conversationId - The full conversation ID (e.g., "6981fddd-2834-8394-9b08-a9b19891753c")
+ * @returns {string} First 8 characters (e.g., "6981fddd")
+ */
+function getShortConversationId(conversationId) {
+    if (!conversationId || typeof conversationId !== 'string') {
+        return '';
+    }
+    return conversationId.substring(0, 8);
+}
+
+/**
+ * Extract 10-digit integer from create_time timestamp
+ * The create_time is a Unix timestamp in seconds with decimal places
+ *
+ * @param {number|null|undefined} createTime - Unix timestamp (e.g., 1770126827.760625)
+ * @returns {number|null} 10-digit integer portion (e.g., 1770126827) or null if invalid
+ */
+function getChronum(createTime) {
+    if (createTime === null || createTime === undefined) {
+        return null;
+    }
+
+    // Handle already integer values
+    if (Number.isInteger(createTime)) {
+        return createTime;
+    }
+
+    // Handle floating point - take integer portion (floor)
+    if (typeof createTime === 'number' && !isNaN(createTime)) {
+        return Math.floor(createTime);
+    }
+
+    // Handle string numbers
+    if (typeof createTime === 'string') {
+        const parsed = parseFloat(createTime);
+        if (!isNaN(parsed)) {
+            return Math.floor(parsed);
+        }
+    }
+
+    return null;
+}
+
+/**
  * Format ISO date string
  */
 function formatDate(timestamp) {
@@ -42,6 +89,42 @@ function formatDate(timestamp) {
     }
 
     return new Date(timestamp).toISOString();
+}
+
+/**
+ * Format timestamp to truncated YYYY-MM-DDTHH:MM format (no seconds, no Z suffix)
+ * This format is used for the created and updated frontmatter properties
+ *
+ * @param {number|string|null|undefined} timestamp - Unix timestamp in seconds (e.g., 1770126827.760625)
+ * @returns {string} Truncated ISO format (e.g., "2026-02-03T13:53")
+ */
+function formatTruncatedDate(timestamp) {
+    if (!timestamp) {
+        // Return current time truncated
+        return new Date().toISOString().slice(0, 16);
+    }
+
+    // Handle Unix timestamps (seconds)
+    if (typeof timestamp === 'number') {
+        return new Date(timestamp * 1000).toISOString().slice(0, 16);
+    }
+
+    // Handle string timestamps (parse as float for Unix timestamps)
+    if (typeof timestamp === 'string') {
+        const parsed = parseFloat(timestamp);
+        if (!isNaN(parsed)) {
+            return new Date(parsed * 1000).toISOString().slice(0, 16);
+        }
+    }
+
+    // Fallback: try to parse as a date string
+    const date = new Date(timestamp);
+    if (!isNaN(date.getTime())) {
+        return date.toISOString().slice(0, 16);
+    }
+
+    // Ultimate fallback
+    return new Date().toISOString().slice(0, 16);
 }
 
 /**
@@ -413,5 +496,7 @@ export {
     sanitizeFilename,
     conversationToMarkdown,
     extractMessages,
-    formatDate
+    formatDate,
+    getShortConversationId,
+    getChronum
 };
