@@ -6,6 +6,20 @@
  */
 
 /**
+ * Normalize encoding issues from UTF-16LE JSON files
+ * The box-drawing characters ┬╖ (U+252C U+2556) appear when a middle dot (·)
+ * gets corrupted during UTF-8 to UTF-16LE conversion in the ChatGPT export
+ *
+ * @param {string} text - Text that may contain encoding corruption
+ * @returns {string} Text with encoding issues normalized
+ */
+function normalizeEncoding(text) {
+    if (!text) return text;
+    // Replace corrupted middle dot (┬╖) with actual middle dot (·)
+    return text.replace(/\u252C\u2556/g, '\u00B7');
+}
+
+/**
  * Sanitize filename by replacing invalid characters with underscores
  * and converting spaces to underscores
  */
@@ -13,9 +27,7 @@ function sanitizeFilename(title) {
     if (!title) return 'Untitled_Conversation';
 
     // Normalize encoding issues from UTF-16LE JSON files
-    // The box-drawing characters ┬╖ (U+252C U+2556) appear when a middle dot (·)
-    // gets corrupted during UTF-8 to UTF-16LE conversion in the ChatGPT export
-    let filename = title.replace(/\u252C\u2556/g, '\u00B7');
+    let filename = normalizeEncoding(title);
 
     // Replace spaces with underscores
     filename = filename.replace(/\s+/g, '_');
@@ -539,8 +551,8 @@ function extractMessages(conversation) {
  * Convert conversation to Obsidian-compatible Markdown
  */
 function conversationToMarkdown(conversation) {
-    // Trim title to remove leading/trailing whitespace (including newlines)
-    const title = (conversation.title || 'Untitled Conversation').trim();
+    // Trim title and normalize encoding issues from UTF-16LE JSON files
+    const title = normalizeEncoding((conversation.title || 'Untitled Conversation').trim());
     const modelSlug = detectModel(conversation);
     const modelDisplayName = getModelDisplayName(modelSlug);
     const created = formatTruncatedDate(conversation.create_time);

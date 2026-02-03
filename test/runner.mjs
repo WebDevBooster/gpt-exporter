@@ -1028,10 +1028,11 @@ async function runHelperTests() {
 
         // Verify both aliases are present
         assert(content.includes('  - 6981255a'), 'First alias should be 8-char ID');
-        // The title should be preserved in second alias
-        const title = branchConv.title;
-        assert(content.includes(`  - ${title} 6981255a`),
-            `Second alias should be "${title} 6981255a"`);
+        // The title is normalized (UTF-16LE encoding issues fixed)
+        // Raw title has ┬╖ (U+252C U+2556), but output has · (U+00B7)
+        const normalizedTitle = 'Branch · Diacritics and Accents';  // Expected normalized title
+        assert(content.includes(`  - ${normalizedTitle} 6981255a`),
+            `Second alias should be "${normalizedTitle} 6981255a"`);
     });
 
     // Feature #27: Aliases appear in correct YAML list format
@@ -1735,6 +1736,49 @@ async function runIntegrationTests() {
         // Verify filename
         assertEqual(result.filename, 'English_Checking_&_Tutoring/Diacritics_and_Accents_698065a8.md',
             'Filename should match expected');
+    });
+
+    // Feature #35: End-to-end test - Generated output matches Branch_·_Diacritics_and_Accents_6981255a.md exactly
+    // This tests the branching conversation with a parent link
+    await test('Feature #35: generated output matches Branch_·_Diacritics_and_Accents_6981255a.md exactly', () => {
+        // Load branching conversations
+        const testFile = join(projectRoot, 'test-exports-and-logs', '4-branching-conversations_for_mock_API.json');
+        const conversations = loadUTF16LEJson(testFile);
+
+        // Find the "Branch · Diacritics and Accents" conversation by ID
+        const conv = conversations.find(c => c.conversation_id === '6981255a-0c54-8393-9176-98d226ea8c0c');
+        assert(conv, 'Should find Branch conversation');
+
+        // Add project metadata (this is normally added by background.js during export)
+        conv._projectId = 'g-p-678ce30e20dc8191ab325e517603d768';
+        conv._projectName = 'English Checking & Tutoring';
+
+        // Process through conversationToMarkdown
+        const result = conversationToMarkdown(conv);
+
+        // Load expected file
+        const expectedPath = join(projectRoot, 'test-vault', 'English_Checking_&_Tutoring', 'Branch_·_Diacritics_and_Accents_6981255a.md');
+        const expectedContent = readFileSync(expectedPath, 'utf8');
+
+        // Extract frontmatter from both (everything between first and second ---)
+        const generatedFrontmatter = result.content.split('---')[1];
+        const expectedFrontmatter = expectedContent.split('---')[1];
+
+        // Verify frontmatter matches exactly
+        const normalizedGenerated = generatedFrontmatter.replace(/\r\n/g, '\n').trim();
+        const normalizedExpected = expectedFrontmatter.replace(/\r\n/g, '\n').trim();
+
+        if (normalizedGenerated !== normalizedExpected) {
+            throw new Error(`Frontmatter does not match:\n\nExpected:\n${normalizedExpected}\n\nGot:\n${normalizedGenerated}`);
+        }
+
+        // Verify parent link format per feature step: '[[Diacritics_and_Accents_698065a8]]'
+        assert(result.content.includes('parent:\n  - "[[Diacritics_and_Accents_698065a8]]"'),
+            'Should have parent link in correct format');
+
+        // Verify filename (middle dot character preserved)
+        assertEqual(result.filename, 'English_Checking_&_Tutoring/Branch_·_Diacritics_and_Accents_6981255a.md',
+            'Filename should match expected with middle dot');
     });
 }
 
