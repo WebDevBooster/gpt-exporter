@@ -898,12 +898,77 @@ Code fences are NOT prefixed with `> `:
 
 ---
 
+## Session 17 (Agent for Feature #38) - 2026-02-03
+
+### Feature Completed This Session: 1
+
+#### Feature #38: Put ChatGPT's object-only output inside code fences
+- Status: PASSED
+- NEW FEATURE: Wrap JSON-only ChatGPT messages in code fences when followed by another ChatGPT message
+- Implementation:
+  1. Added logic in `conversationToMarkdown()` to check each assistant message
+  2. If message content starts with `{` and ends with `}` AND is followed by another assistant message
+  3. Wrap the JSON message in code fences (``` ... ```)
+- Use case: When ChatGPT outputs a JSON query/command object, it's often followed by a response from the same model
+
+### Example Output Format
+Before (old format):
+```markdown
+#### ChatGPT:
+{"query":"current time"}
+
+#### ChatGPT:
+Second message.
+```
+
+After (new format with code fences):
+```markdown
+#### ChatGPT:
+```
+{"query":"current time"}
+```
+
+#### ChatGPT:
+Second message.
+```
+
+### Edge Cases Tested
+1. JSON message followed by ChatGPT → wrapped in code fences ✓
+2. JSON message at end of conversation → NOT wrapped ✓
+3. JSON message followed by user message → NOT wrapped ✓
+4. Regular text message → NOT wrapped ✓
+5. Partial JSON (starts with { but doesn't end with }) → NOT wrapped ✓
+
+### Current Progress
+- **Passing: 38/38 features (100%)** 🎉
+- All features complete (including new Feature #38)
+
+### Test Results
+- All 139 tests passing (+6 new Feature #38 tests)
+- Infrastructure tests: ✓ (3 tests)
+- Helper function tests: ✓ (131 tests)
+- Integration tests: ✓ (5 tests)
+
+### Files Modified
+- export/markdown.js: Added JSON detection and code fence wrapping in conversationToMarkdown()
+- test/runner.mjs: Added 6 new Feature #38 tests
+
+### Git Commits Made This Session
+1. fb8921c: feat: wrap JSON-only ChatGPT messages in code fences when followed by another ChatGPT message (Feature #38)
+
+### Technical Notes
+- Detection is simple: `content.trim().startsWith('{') && content.trim().endsWith('}')`
+- Only wraps if NEXT message is also from assistant (role === 'assistant')
+- Uses the `index` parameter from `messages.map((msg, index) => ...)` to check next message
+
+---
+
 ## PROJECT COMPLETE 🎉
 
 ### Final Summary
-- **Total Features:** 37
-- **Passing Features:** 37 (100%)
-- **Total Tests:** 133
+- **Total Features:** 38
+- **Passing Features:** 38 (100%)
+- **Total Tests:** 139
 
 ### Modifications Implemented
 1. ✓ chronum property added to frontmatter (from create_time)
@@ -914,7 +979,8 @@ Code fences are NOT prefixed with `> `:
 6. ✓ Aliases with ID and title+ID (wrapped in double quotes)
 7. ✓ Tags in YAML list format with project tag
 8. ✓ model property removed, model-name retained
-9. ✓ User questions formatted as Obsidian callouts (NEW)
+9. ✓ User questions formatted as Obsidian callouts
+10. ✓ JSON-only ChatGPT messages wrapped in code fences when followed by another ChatGPT (NEW)
 
 ### Key Technical Achievements
 - UTF-16LE JSON file handling with proper BOM detection
@@ -922,5 +988,6 @@ Code fences are NOT prefixed with `> `:
 - Consistent filename generation for files and parent links
 - Double-quoted aliases to ensure YAML string interpretation
 - Callout formatting for user questions with code fence awareness
+- JSON message detection with code fence wrapping
 - Comprehensive test suite with unit, helper, and integration tests
 - All output verified against expected test-vault files
