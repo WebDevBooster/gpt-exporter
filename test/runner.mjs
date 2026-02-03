@@ -276,6 +276,52 @@ async function runHelperTests() {
         assertEqual(result, '');
     });
 
+    // getChronum edge case tests
+    await test('getChronum handles edge cases in frontmatter context', () => {
+        // Test with a conversation that has missing create_time
+        const conversation = {
+            title: 'Test Conversation',
+            update_time: 1770126827.760625,
+            conversation_id: '6981fddd-2834-8394-9b08-a9b19891753c',
+            mapping: {}
+        };
+
+        const result = conversationToMarkdown(conversation);
+        // Should still generate markdown even without create_time
+        assert(result.content.includes('---'), 'Should have frontmatter');
+        // chronum should show null when create_time is missing
+        assert(result.content.includes('chronum: null'), 'chronum should be null when create_time is missing');
+    });
+
+    // formatTruncatedDate tests
+    await test('formatTruncatedDate formats timestamp to YYYY-MM-DDTHH:MM', () => {
+        const result = formatTruncatedDate(1770126827.760625);
+        assertEqual(result, '2026-02-03T13:53');
+    });
+
+    await test('formatTruncatedDate removes seconds and Z suffix', () => {
+        const result = formatTruncatedDate(1770126827.760625);
+        assert(!result.includes(':47'), 'Should not contain seconds');
+        assert(!result.endsWith('Z'), 'Should not end with Z');
+        assertEqual(result.length, 16, 'Should be exactly 16 characters');
+    });
+
+    await test('formatTruncatedDate handles integer timestamps', () => {
+        const result = formatTruncatedDate(1770022467);
+        assertEqual(result, '2026-02-02T08:54');
+    });
+
+    await test('formatTruncatedDate handles string timestamps', () => {
+        const result = formatTruncatedDate('1770071387');
+        assertEqual(result, '2026-02-02T22:29');
+    });
+
+    await test('formatTruncatedDate returns current time for null', () => {
+        const result = formatTruncatedDate(null);
+        assert(result.length === 16, 'Should return 16-char truncated date');
+        assert(result.includes('T'), 'Should contain T separator');
+    });
+
     // chronum in frontmatter tests
     await test('chronum property appears in frontmatter after model-name', () => {
         // Create a minimal conversation object
