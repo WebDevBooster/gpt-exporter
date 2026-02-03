@@ -325,3 +325,67 @@
 - generateFilename is used for BOTH actual filenames AND parent internal links
 - This ensures Obsidian links resolve correctly
 - The 8-character ID comes from the first segment of the UUID (before first hyphen)
+
+---
+
+## Session 8 (Agent Batch #16-18) - 2026-02-03
+
+### Features Completed This Session: 3
+
+#### Feature #16: extractBranchingInfo finds branching metadata in conversation mapping
+- Status: PASSED
+- Created `extractBranchingInfo()` function in export/markdown.js
+- Searches through conversation.mapping nodes for branching_from_conversation_id/title
+- Returns {parentId, parentTitle} or null if not found
+- Added 4 tests covering:
+  - Finding branching info from real mock data
+  - Returning null for conversations without parent
+  - Handling null input
+  - Handling conversation without mapping
+
+#### Feature #17: Parent property shows empty list item when no parent exists
+- Status: PASSED
+- Added parent property to frontmatter in conversationToMarkdown()
+- Format when no parent: 'parent:\n  - ' (empty YAML list item)
+- Property order: aliases, parent, type
+- Added 3 tests verifying:
+  - Empty list item format
+  - Exact YAML format (parent:\n  - )
+  - Position after aliases, before type
+
+#### Feature #18: Parent property shows Obsidian internal link when parent exists
+- Status: PASSED
+- Format when parent exists: 'parent:\n  - "[[Filename_shortid]]"'
+- Uses extractBranchingInfo() to get parent info
+- Uses generateFilename() to create consistent link format
+- Added 3 tests verifying:
+  - Internal link appears for branching conversations
+  - [[filename]] format without .md extension
+  - Exact format matches spec example
+
+### Current Progress
+- Passing: 22/35 features (62.9%)
+- In Progress: 1 feature (other agent)
+- Remaining: 12 features
+
+### Test Results
+- All 74 tests passing
+- Infrastructure tests: ✓ (3 tests)
+- Helper function tests: ✓ (69 tests)
+- Integration tests: ✓ (2 tests)
+
+### Files Modified
+- export/markdown.js: Added extractBranchingInfo(), updated conversationToMarkdown() with parent property
+- test/runner.mjs: Added 10 new tests for extractBranchingInfo and parent property
+- test/analyze-branching.mjs: Created utility script to analyze branching metadata structure
+
+### Git Commits Made This Session
+1. 83943d8: feat: implement extractBranchingInfo function (Feature #16)
+2. ef674bd: feat: add parent property with empty list item format (Feature #17)
+3. 9622010: feat: add parent property with Obsidian internal link (Feature #18)
+
+### Technical Notes
+- extractBranchingInfo searches all nodes in conversation.mapping
+- Branching info is in message.metadata, not at conversation root level
+- Parent link uses same generateFilename format as actual file output
+- This ensures Obsidian [[]] links resolve correctly to the parent file
