@@ -322,6 +322,66 @@ async function runHelperTests() {
         assert(result.includes('T'), 'Should contain T separator');
     });
 
+    // Feature #10: Timestamp edge case tests
+    await test('formatTruncatedDate handles undefined timestamp gracefully', () => {
+        const result = formatTruncatedDate(undefined);
+        // Should return a valid truncated format (current time)
+        assert(typeof result === 'string', 'Should return a string');
+        assert(result.length === 16, 'Should be 16 characters (YYYY-MM-DDTHH:MM)');
+        assert(result.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/), 'Should match truncated ISO format');
+    });
+
+    await test('formatTruncatedDate handles NaN gracefully', () => {
+        const result = formatTruncatedDate(NaN);
+        // NaN is falsy so should return current time
+        assert(typeof result === 'string', 'Should return a string');
+        assert(result.length === 16, 'Should be 16 characters (YYYY-MM-DDTHH:MM)');
+        assert(result.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/), 'Should match truncated ISO format');
+    });
+
+    await test('formatTruncatedDate handles invalid string gracefully', () => {
+        const result = formatTruncatedDate('not-a-date');
+        // Invalid string should fallback to current time
+        assert(typeof result === 'string', 'Should return a string');
+        assert(result.length === 16, 'Should be 16 characters (YYYY-MM-DDTHH:MM)');
+        assert(result.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/), 'Should match truncated ISO format');
+    });
+
+    // Feature #8: created timestamp uses truncated format
+    await test('created timestamp uses truncated format in frontmatter', () => {
+        const conversation = {
+            title: 'Test Conversation',
+            create_time: 1770126827.760625,
+            update_time: 1770126833.018922,
+            conversation_id: '6981fddd-2834-8394-9b08-a9b19891753c',
+            mapping: {}
+        };
+
+        const result = conversationToMarkdown(conversation);
+        const content = result.content;
+
+        // Check that created uses truncated format (no seconds, no Z)
+        assert(content.includes('created: 2026-02-03T13:53'), 'created should use truncated format: 2026-02-03T13:53');
+        assert(!content.match(/created: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/), 'created should NOT have seconds');
+        assert(!content.includes('created: 2026-02-03T13:53:47'), 'created should NOT include seconds');
+    });
+
+    await test('formatTruncatedDate handles zero timestamp', () => {
+        const result = formatTruncatedDate(0);
+        // 0 is falsy, should return current time (not 1970-01-01)
+        assert(typeof result === 'string', 'Should return a string');
+        assert(result.length === 16, 'Should be 16 characters (YYYY-MM-DDTHH:MM)');
+        assert(result.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/), 'Should match truncated ISO format');
+    });
+
+    await test('formatTruncatedDate handles empty string gracefully', () => {
+        const result = formatTruncatedDate('');
+        // Empty string is falsy, should return current time
+        assert(typeof result === 'string', 'Should return a string');
+        assert(result.length === 16, 'Should be 16 characters (YYYY-MM-DDTHH:MM)');
+        assert(result.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/), 'Should match truncated ISO format');
+    });
+
     // chronum in frontmatter tests
     await test('chronum property appears in frontmatter after model-name', () => {
         // Create a minimal conversation object

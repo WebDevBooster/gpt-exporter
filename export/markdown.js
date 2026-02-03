@@ -424,7 +424,7 @@ function conversationToMarkdown(conversation) {
     const title = (conversation.title || 'Untitled Conversation').trim();
     const modelSlug = detectModel(conversation);
     const modelDisplayName = getModelDisplayName(modelSlug);
-    const created = formatDate(conversation.create_time);
+    const created = formatTruncatedDate(conversation.create_time);
     const updated = formatDate(conversation.update_time);
     const conversationId = conversation.conversation_id || conversation.id;
 
