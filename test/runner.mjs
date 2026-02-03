@@ -1033,6 +1033,111 @@ async function runHelperTests() {
         assert(content.includes(`  - ${title} 6981255a`),
             `Second alias should be "${title} 6981255a"`);
     });
+
+    // Feature #27: Aliases appear in correct YAML list format
+    await test('Feature #27: aliases use YAML list format (not inline)', () => {
+        const conversation = {
+            title: 'Unusual Adjective',
+            create_time: 1770126827.760625,
+            update_time: 1770126833.018922,
+            conversation_id: '6981fddd-2834-8394-9b08-a9b19891753c',
+            mapping: {}
+        };
+
+        const result = conversationToMarkdown(conversation);
+        const content = result.content;
+
+        // Verify aliases is NOT inline format like: aliases: [id1, id2]
+        assert(!content.match(/aliases:\s*\[/), 'Aliases should NOT be inline format');
+
+        // Verify aliases IS list format
+        assert(content.includes('aliases:\n'), 'Aliases should end with newline, followed by list items');
+        assert(content.includes('\n  - '), 'Aliases list items should have proper indentation');
+    });
+
+    await test('Feature #27: aliases have two-space indentation before list dash', () => {
+        const conversation = {
+            title: 'Test Title',
+            create_time: 1770126827.760625,
+            update_time: 1770126833.018922,
+            conversation_id: '698065a8-9160-8392-a810-0ae50700979b',
+            mapping: {}
+        };
+
+        const result = conversationToMarkdown(conversation);
+        const content = result.content;
+
+        // Extract the aliases block
+        const aliasesMatch = content.match(/aliases:\n([\s\S]*?)(?=\nparent:|$)/);
+        assert(aliasesMatch, 'Should find aliases block');
+
+        const aliasesBlock = aliasesMatch[1];
+
+        // Verify each line starts with exactly "  - " (two spaces, dash, space)
+        const lines = aliasesBlock.split('\n').filter(line => line.trim());
+        assert(lines.length >= 1, 'Should have at least one alias');
+
+        for (const line of lines) {
+            assert(line.startsWith('  - '),
+                `Alias line should start with "  - " (two spaces), got: "${line}"`);
+            // Make sure it's not three spaces or one space
+            assert(!line.startsWith('   '), 'Should not have three spaces');
+            assert(!line.startsWith(' -'), 'Should not have one space');
+        }
+    });
+
+    await test('Feature #27: aliases format matches expected test-vault output - Unusual Adjective', () => {
+        // Load the same conversation used in test-vault
+        const testFile = join(projectRoot, 'test-exports-and-logs', '1-conversation_for_mock_API.json');
+        const conversations = loadUTF16LEJson(testFile);
+        const conv = conversations[0];  // "Unusual Adjective"
+
+        const result = conversationToMarkdown(conv);
+        const content = result.content;
+
+        // Expected aliases format from test-vault/Tëster's_Pläýground_for_&#!,;$£_Frieñd̄žß/Unusual_Adjective_6981fddd.md
+        const expectedAliasesFormat = 'aliases:\n  - 6981fddd\n  - Unusual Adjective 6981fddd\n';
+        assert(content.includes(expectedAliasesFormat),
+            'Aliases format should match expected test-vault output exactly');
+    });
+
+    await test('Feature #27: aliases format matches expected test-vault output - Diacritics and Accents', () => {
+        // Load the branching conversations
+        const testFile = join(projectRoot, 'test-exports-and-logs', '4-branching-conversations_for_mock_API.json');
+        const conversations = loadUTF16LEJson(testFile);
+
+        // Find the root conversation "Diacritics and Accents"
+        const conv = conversations.find(c => c.conversation_id === '698065a8-9160-8392-a810-0ae50700979b');
+        assert(conv, 'Should find Diacritics and Accents conversation');
+
+        const result = conversationToMarkdown(conv);
+        const content = result.content;
+
+        // Expected aliases format from test-vault
+        const expectedAliasesFormat = 'aliases:\n  - 698065a8\n  - Diacritics and Accents 698065a8\n';
+        assert(content.includes(expectedAliasesFormat),
+            'Aliases format should match expected test-vault output for Diacritics and Accents');
+    });
+
+    await test('Feature #27: aliases format matches expected test-vault output - Branch conversation', () => {
+        // Load the branching conversations
+        const testFile = join(projectRoot, 'test-exports-and-logs', '4-branching-conversations_for_mock_API.json');
+        const conversations = loadUTF16LEJson(testFile);
+
+        // Find the branch conversation
+        const conv = conversations.find(c => c.conversation_id === '6981255a-0c54-8393-9176-98d226ea8c0c');
+        assert(conv, 'Should find Branch conversation');
+
+        const result = conversationToMarkdown(conv);
+        const content = result.content;
+
+        // The title may have encoding variations, so we check for the pattern
+        // Expected: aliases:\n  - 6981255a\n  - <title> 6981255a
+        assert(content.includes('aliases:\n  - 6981255a\n  - '),
+            'Aliases should have ID as first item');
+        assert(content.includes(' 6981255a\nparent:'),
+            'Second alias should end with ID followed by parent property');
+    });
 }
 
 /**
