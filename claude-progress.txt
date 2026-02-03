@@ -179,3 +179,48 @@
 - `formatTruncatedDate` uses ISO string slicing: `.toISOString().slice(0, 16)`
 - This ensures consistent UTC-based formatting across all timestamps
 - Gracefully handles edge cases (null, undefined, invalid) by returning current time
+
+---
+
+## Session 5 (Agent Batch #14-15) - 2026-02-03
+
+### Features Completed This Session: 2
+
+#### Feature #14: sanitizeProjectTag removes special characters and collapses hyphens
+- Status: PASSED
+- Verified existing `sanitizeProjectTag()` function implementation in export/markdown.js
+- Added 8 comprehensive tests verifying:
+  - Removal of special characters (&#!,;$£)
+  - Collapsing multiple consecutive hyphens to single hyphen
+  - Removal of leading hyphens
+  - Removal of trailing hyphens
+  - Spec example: "Tester's Playground for &#!,;$ Friendzss" → "tester-s-playground-for-friendzss"
+  - Ampersand removal
+  - Hash removal
+  - Combined special chars and spaces handling
+
+#### Feature #15: sanitizeProjectTag produces correct output for test cases
+- Status: PASSED
+- Added 4 additional tests verifying exact output expectations:
+  - 'English Checking & Tutoring' → 'english-checking-tutoring'
+  - Complex diacritics with special chars → 'tester-s-playground-for-friendzss'
+  - Output contains NO underscores (tested against multiple inputs)
+  - Only hyphens used as separators (not underscores)
+
+### Current Progress
+- Passing: 14/35 features (40%)
+- In Progress: 4 features (other agents)
+- Remaining: 17 features
+
+### Test Results
+- All 50 tests passing
+- Infrastructure tests: ✓ (3 tests)
+- Helper function tests: ✓ (45 tests)
+- Integration tests: ✓ (2 tests)
+
+### Files Modified
+- test/runner.mjs: Added 12 new tests for sanitizeProjectTag functionality
+
+### Git Commits Made This Session
+1. 15b1493: feat: add comprehensive tests for sanitizeProjectTag special char handling (Feature #14)
+2. b8202ac: feat: add comprehensive test coverage for sanitizeProjectTag output validation (Feature #15)
