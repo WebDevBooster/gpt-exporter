@@ -456,6 +456,32 @@ async function runHelperTests() {
         assertEqual(result, 'cafe-resume', 'Accented vowels should transliterate correctly');
     });
 
+    // Feature #13: sanitizeProjectTag replaces spaces and apostrophes with hyphens
+    await test('sanitizeProjectTag replaces spaces with hyphens', () => {
+        const result = sanitizeProjectTag('Hello World Test');
+        assertEqual(result, 'hello-world-test', 'Spaces should become hyphens');
+    });
+
+    await test('sanitizeProjectTag replaces apostrophes with hyphens', () => {
+        const result = sanitizeProjectTag("Tester's Playground");
+        assertEqual(result, 'tester-s-playground', 'Apostrophes should become hyphens');
+    });
+
+    await test('sanitizeProjectTag handles multiple consecutive spaces', () => {
+        const result = sanitizeProjectTag('Hello   World');
+        assertEqual(result, 'hello-world', 'Multiple spaces should collapse to single hyphen');
+    });
+
+    await test('sanitizeProjectTag handles tab and newline whitespace', () => {
+        const result = sanitizeProjectTag("Hello\tWorld\nTest");
+        assertEqual(result, 'hello-world-test', 'All whitespace should become hyphens');
+    });
+
+    await test('sanitizeProjectTag handles both spaces and apostrophes together', () => {
+        const result = sanitizeProjectTag("John's Test Project");
+        assertEqual(result, 'john-s-test-project', 'Mixed spaces and apostrophes should work');
+    });
+
     // Feature #14: sanitizeProjectTag removes special characters and collapses hyphens
     await test('sanitizeProjectTag removes special characters &#!,;$£', () => {
         // Test the exact characters mentioned in the feature
