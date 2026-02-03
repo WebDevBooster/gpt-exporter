@@ -276,3 +276,52 @@
 
 ### Git Commits Made This Session
 1. 157fb6f: feat: add tests for features #11, #12, #13 (sanitizeProjectTag)
+
+---
+
+## Session 7 (Agent Batch #21-23) - 2026-02-03
+
+### Features Completed This Session: 3
+
+#### Feature #21: getShortConversationId extracts first 8 characters from conversation_id
+- Status: PASSED
+- Implementation already existed in export/markdown.js (lines 40-45)
+- Verified with existing tests:
+  - '6981fddd-2834-8394-9b08-a9b19891753c' → '6981fddd'
+  - null → '' (empty string)
+  - undefined → '' (empty string)
+
+#### Feature #22: generateFilename appends short ID to sanitized title
+- Status: PASSED
+- Implementation already existed in export/markdown.js (lines 150-159)
+- Combines sanitizeFilename(title) with getShortConversationId(id)
+- Example: 'Unusual Adjective' + '6981fddd-...' → 'Unusual_Adjective_6981fddd'
+- Also handles missing/empty conversationId (returns just sanitized title)
+
+#### Feature #23: Output filename includes short ID suffix
+- Status: PASSED
+- conversationToMarkdown() already uses generateFilename() for filename generation
+- Added specific test verifying: 'Unusual_Adjective_6981fddd.md' (spec requirement)
+- Project conversations also include ID: 'English_Checking_&_Tutoring/Diacritics_and_Accents_698065a8.md'
+
+### Current Progress
+- Passing: 21/35 features (60%)
+- In Progress: 2 features (other agents)
+- Remaining: 12 features
+
+### Test Results
+- All 66 tests passing
+- Infrastructure tests: ✓ (3 tests)
+- Helper function tests: ✓ (61 tests)
+- Integration tests: ✓ (2 tests)
+
+### Files Modified
+- test/runner.mjs: Added test for exact spec filename requirement (Feature #23)
+
+### Git Commits Made This Session
+1. 44bc1f4: feat: verify features #21, #22, #23 (filename ID suffix)
+
+### Technical Notes
+- generateFilename is used for BOTH actual filenames AND parent internal links
+- This ensures Obsidian links resolve correctly
+- The 8-character ID comes from the first segment of the UUID (before first hyphen)
