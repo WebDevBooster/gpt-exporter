@@ -436,3 +436,48 @@
 - Uses getShortConversationId() helper function already in codebase
 - aliasesProperty builds the full YAML block including both aliases
 - Property order in frontmatter: title, aliases, parent, type, model-name, chronum, created, updated, tags, project, source
+
+---
+
+## Session 10 (Agent for Feature #26) - 2026-02-03
+
+### Feature Completed This Session: 1
+
+#### Feature #26: Aliases include title + space + ID as second item
+- Status: PASSED
+- Verified existing implementation in export/markdown.js (lines 567-573)
+- The aliasesProperty already generates:
+  ```yaml
+  aliases:
+    - 6981fddd
+    - Unusual Adjective 6981fddd
+  ```
+- Second alias preserves the original title (not sanitized) + space + 8-char ID
+- Added 4 new tests verifying:
+  - Second alias includes title + space + 8-char ID
+  - Original title is preserved (not sanitized, e.g., "Test & Special Characters!")
+  - YAML format matches spec example exactly
+  - Works with real branching conversation data from mock files
+
+### Current Progress
+- Passing: 25/35 features (71.4%)
+- In Progress: 2 features (other agents)
+- Remaining: 8 features
+
+### Test Results
+- All 84 tests passing
+- Infrastructure tests: ✓ (3 tests)
+- Helper function tests: ✓ (79 tests)
+- Integration tests: ✓ (2 tests)
+
+### Files Modified
+- test/runner.mjs: Added 4 new tests for Feature #26 aliases functionality
+
+### Git Commits Made This Session
+1. a623b13: feat: add tests for Feature #26 (aliases title + ID as second item)
+
+### Technical Notes
+- Feature #26 builds on Feature #25's implementation
+- Both aliases are generated in a single aliasesProperty string
+- Original title is used (not sanitized) to match Obsidian alias expectations
+- Format: `${title} ${shortId}` produces "Unusual Adjective 6981fddd"
