@@ -1244,6 +1244,99 @@ async function runHelperTests() {
             'Tags format should match expected test-vault output exactly');
     });
 
+    // Feature #29: Project tag added as second item when conversation is in project
+    await test('Feature #29: project tag is second item when conversation has project', () => {
+        const conversation = {
+            title: 'Test Conversation',
+            create_time: 1770126827.760625,
+            update_time: 1770126833.018922,
+            conversation_id: '6981fddd-2834-8394-9b08-a9b19891753c',
+            _projectId: 'g-p-123456',
+            _projectName: 'My Test Project',
+            mapping: {}
+        };
+
+        const result = conversationToMarkdown(conversation);
+        const content = result.content;
+
+        // Extract tags block
+        const tagsMatch = content.match(/tags:\n([\s\S]*?)(?=\nproject:|source:|---)/);
+        assert(tagsMatch, 'Should find tags block');
+
+        const tagsBlock = tagsMatch[1];
+        const tagLines = tagsBlock.split('\n').filter(line => line.trim().startsWith('- '));
+
+        // Should have exactly 2 tags when project exists
+        assertEqual(tagLines.length, 2, 'Should have exactly 2 tags when project exists');
+
+        // Second tag should be the sanitized project name
+        assert(tagLines[1].includes('my-test-project'),
+            'Second tag should be sanitized project name');
+    });
+
+    await test('Feature #29: sanitizeProjectTag used for project tag', () => {
+        const conversation = {
+            title: 'Test Conversation',
+            create_time: 1770126827.760625,
+            update_time: 1770126833.018922,
+            conversation_id: '6981fddd-2834-8394-9b08-a9b19891753c',
+            _projectId: 'g-p-123456',
+            _projectName: 'English Checking & Tutoring',
+            mapping: {}
+        };
+
+        const result = conversationToMarkdown(conversation);
+        const content = result.content;
+
+        // Verify the sanitized tag is 'english-checking-tutoring'
+        assert(content.includes('  - english-checking-tutoring'),
+            'Project tag should be sanitized to english-checking-tutoring');
+    });
+
+    await test('Feature #29: no project tag when conversation has no project', () => {
+        const conversation = {
+            title: 'Test Conversation',
+            create_time: 1770126827.760625,
+            update_time: 1770126833.018922,
+            conversation_id: '6981fddd-2834-8394-9b08-a9b19891753c',
+            // No _projectId or _projectName
+            mapping: {}
+        };
+
+        const result = conversationToMarkdown(conversation);
+        const content = result.content;
+
+        // Extract tags block
+        const tagsMatch = content.match(/tags:\n([\s\S]*?)(?=\nsource:|---)/);
+        assert(tagsMatch, 'Should find tags block');
+
+        const tagsBlock = tagsMatch[1];
+        const tagLines = tagsBlock.split('\n').filter(line => line.trim().startsWith('- '));
+
+        // Should have only 1 tag (gpt-chat) when no project
+        assertEqual(tagLines.length, 1, 'Should have only 1 tag when no project');
+        assert(tagLines[0].includes('gpt-chat'),
+            'Single tag should be gpt-chat');
+    });
+
+    await test('Feature #29: project tag format matches test-vault output', () => {
+        // Load actual mock conversation and add project info
+        const testFile = join(projectRoot, 'test-exports-and-logs', '1-conversation_for_mock_API.json');
+        const conversations = loadUTF16LEJson(testFile);
+        const conv = conversations[0];
+
+        // Add project info (normally added by background.js)
+        conv._projectId = 'g-p-69817ef78ab48191bc06ca7b51f5cc70';
+        conv._projectName = "Tëster's Pläýground for &#!,;$£ Frieñd̄žß";
+
+        const result = conversationToMarkdown(conv);
+        const content = result.content;
+
+        // Expected from test-vault: tester-s-playground-for-friendzss
+        assert(content.includes('  - tester-s-playground-for-friendzss'),
+            'Project tag should match expected sanitized format from test-vault');
+    });
+
     // Feature #31: model property is removed from frontmatter (only model-name remains)
     await test('Feature #31: model property is NOT in frontmatter', () => {
         const conversation = {
