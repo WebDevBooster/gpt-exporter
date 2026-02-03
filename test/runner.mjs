@@ -29,7 +29,8 @@ import {
     formatTruncatedDate,
     getShortConversationId,
     getChronum,
-    extractBranchingInfo
+    extractBranchingInfo,
+    generateFilename
 } from '../export/markdown.js';
 
 /**
@@ -627,6 +628,93 @@ async function runHelperTests() {
     await test('extractBranchingInfo returns null for conversation without mapping', () => {
         const result = extractBranchingInfo({ title: 'Test', conversation_id: '123' });
         assertEqual(result, null, 'Should return null when mapping is missing');
+    });
+
+    // Feature #19: generateFilename tests - Parent link uses same filename generation as actual files
+    await test('generateFilename combines sanitized title with short conversation ID', () => {
+        const result = generateFilename('Diacritics and Accents', '698065a8-9160-8392-a810-0ae50700979b');
+        assertEqual(result, 'Diacritics_and_Accents_698065a8', 'Should match expected filename format');
+    });
+
+    await test('generateFilename handles title: Unusual Adjective', () => {
+        const result = generateFilename('Unusual Adjective', '6981fddd-2834-8394-9b08-a9b19891753c');
+        assertEqual(result, 'Unusual_Adjective_6981fddd', 'Should produce correct filename');
+    });
+
+    await test('generateFilename handles title with special characters', () => {
+        const result = generateFilename('Branch · Diacritics and Accents', '6981255a-0c54-8393-9176-98d226ea8c0c');
+        assertEqual(result, 'Branch_·_Diacritics_and_Accents_6981255a', 'Should handle special characters in title');
+    });
+
+    await test('generateFilename returns sanitized title when conversationId is missing', () => {
+        const result = generateFilename('Test Title', null);
+        assertEqual(result, 'Test_Title', 'Should return just sanitized title without ID');
+    });
+
+    await test('generateFilename returns sanitized title when conversationId is empty', () => {
+        const result = generateFilename('Test Title', '');
+        assertEqual(result, 'Test_Title', 'Should return just sanitized title without ID');
+    });
+
+    // Verify that file output uses generateFilename (consistency test)
+    await test('conversationToMarkdown filename includes short conversation ID', () => {
+        const conversation = {
+            title: 'Diacritics and Accents',
+            create_time: 1770022467,
+            update_time: 1770022712.607,
+            conversation_id: '698065a8-9160-8392-a810-0ae50700979b',
+            mapping: {}
+        };
+
+        const result = conversationToMarkdown(conversation);
+        // Filename should include the short ID
+        assert(result.filename.includes('698065a8'), 'Filename should include short conversation ID');
+        assertEqual(result.filename, 'Diacritics_and_Accents_698065a8.md', 'Filename should match expected format');
+    });
+
+    // Test that project conversations also use generateFilename
+    await test('conversationToMarkdown with project uses generateFilename', () => {
+        const conversation = {
+            title: 'Diacritics and Accents',
+            create_time: 1770022467,
+            update_time: 1770022712.607,
+            conversation_id: '698065a8-9160-8392-a810-0ae50700979b',
+            _projectId: 'g-p-678ce30e20dc8191ab325e517603d768',
+            _projectName: 'English Checking & Tutoring',
+            mapping: {}
+        };
+
+        const result = conversationToMarkdown(conversation);
+        // Should have project folder + filename with ID
+        assertEqual(result.filename, 'English_Checking_&_Tutoring/Diacritics_and_Accents_698065a8.md',
+            'Filename with project should include short conversation ID');
+    });
+
+    // Test that parent link uses same filename format as actual file
+    await test('parent link format matches actual filename format', () => {
+        // The expected parent link for Branch conversation
+        const parentTitle = 'Diacritics and Accents';
+        const parentId = '698065a8-9160-8392-a810-0ae50700979b';
+
+        // Generate what the parent link SHOULD be
+        const expectedParentLink = generateFilename(parentTitle, parentId);
+        assertEqual(expectedParentLink, 'Diacritics_and_Accents_698065a8',
+            'Parent link should use generateFilename format');
+
+        // Generate the actual filename for comparison
+        const conversation = {
+            title: parentTitle,
+            create_time: 1770022467,
+            update_time: 1770022712.607,
+            conversation_id: parentId,
+            mapping: {}
+        };
+        const result = conversationToMarkdown(conversation);
+
+        // Extract just the filename (without .md extension)
+        const actualFilenameBase = result.filename.replace('.md', '');
+        assertEqual(actualFilenameBase, expectedParentLink,
+            'Parent link and actual filename should be identical');
     });
 }
 

@@ -595,7 +595,8 @@ function conversationToMarkdown(conversation) {
     ].join('\n');
 
     // Build file path with project folder if applicable
-    const baseFilename = sanitizeFilename(title) + '.md';
+    // Use generateFilename for consistency with parent links
+    const baseFilename = generateFilename(title, conversationId) + '.md';
     let filepath = baseFilename;
 
     if (projectName) {
@@ -619,5 +620,6 @@ export {
     formatTruncatedDate,
     getShortConversationId,
     getChronum,
-    extractBranchingInfo
+    extractBranchingInfo,
+    generateFilename
 };
