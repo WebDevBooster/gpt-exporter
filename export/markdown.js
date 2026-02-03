@@ -437,14 +437,18 @@ function conversationToMarkdown(conversation) {
         ? `https://chatgpt.com/g/${projectId}/c/${conversationId}`
         : `https://chatgpt.com/c/${conversationId}`;
 
-    // Build YAML frontmatter (matching user's existing format)
+    // Get chronum from create_time
+    const chronum = getChronum(conversation.create_time);
+
+    // Build YAML frontmatter (new format per spec)
+    // Property order: title, aliases, parent, type, model-name, chronum, created, updated, tags, project, source
     const frontmatterLines = [
         '---',
         `title: "${title.replace(/"/g, '\\"')}"`,
         'aliases: ',
         'type: gpt-chat',
-        `model: ${modelDisplayName}`,
         `model-name: ${modelSlug}`,
+        `chronum: ${chronum}`,
         `created: ${created}`,
         `updated: ${updated}`,
         'tags: gpt-chat',
@@ -497,6 +501,7 @@ export {
     conversationToMarkdown,
     extractMessages,
     formatDate,
+    formatTruncatedDate,
     getShortConversationId,
     getChronum
 };

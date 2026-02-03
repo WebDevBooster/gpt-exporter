@@ -25,6 +25,7 @@ import {
     conversationToMarkdown,
     extractMessages,
     formatDate,
+    formatTruncatedDate,
     getShortConversationId,
     getChronum
 } from '../export/markdown.js';
@@ -273,6 +274,36 @@ async function runHelperTests() {
     await test('getShortConversationId returns empty string for undefined', () => {
         const result = getShortConversationId(undefined);
         assertEqual(result, '');
+    });
+
+    // chronum in frontmatter tests
+    await test('chronum property appears in frontmatter after model-name', () => {
+        // Create a minimal conversation object
+        const conversation = {
+            title: 'Test Conversation',
+            create_time: 1770126827.760625,
+            update_time: 1770126827.760625,
+            conversation_id: '6981fddd-2834-8394-9b08-a9b19891753c',
+            mapping: {}
+        };
+
+        const result = conversationToMarkdown(conversation);
+        const content = result.content;
+
+        // Check that chronum appears in the frontmatter
+        assert(content.includes('chronum: 1770126827'), 'Should include chronum property');
+
+        // Check property order: model-name before chronum before created
+        const modelNameIndex = content.indexOf('model-name:');
+        const chronumIndex = content.indexOf('chronum:');
+        const createdIndex = content.indexOf('created:');
+
+        assert(modelNameIndex > 0, 'model-name should be in frontmatter');
+        assert(chronumIndex > 0, 'chronum should be in frontmatter');
+        assert(createdIndex > 0, 'created should be in frontmatter');
+
+        assert(chronumIndex > modelNameIndex, 'chronum should come after model-name');
+        assert(chronumIndex < createdIndex, 'chronum should come before created');
     });
 }
 
