@@ -29,8 +29,10 @@ Located in `test-exports-and-logs/`:
 | `1-conversation_for_mock_API.json` | Single conversation in a project |
 | `3-conversations_for_mock_API.json` | Multiple conversations |
 | `4-branching-conversations_for_mock_API.json` | Parent-child conversation relationships |
+| `12-conversations_for_mock_API.json` | Multiple conversations with various edge cases |
+| `333-conversations_for_mock_API.json` | Large dataset (333 conversations) for bulk/performance testing |
 
-**Important:** These files are UTF-16LE encoded with BOM. The test runner handles this encoding automatically.
+**Note:** The test runner auto-detects encoding and supports both UTF-16LE (with BOM) and UTF-8.
 
 ## Expected Output Files
 
@@ -110,8 +112,8 @@ The expected frontmatter format after all modifications:
 ---
 title: "Conversation Title"
 aliases:
-  - 6981fddd
-  - Conversation Title 6981fddd
+  - "6981fddd"
+  - "Conversation Title 6981fddd"
 parent:
   - "[[Parent_Filename_abcd1234]]"  # or empty: -
 type: gpt-chat
