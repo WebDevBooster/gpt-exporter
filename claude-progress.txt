@@ -1051,7 +1051,9 @@ Inline code: `#ff0000` stays as `#ff0000`
 8. ✓ model property removed, model-name retained
 9. ✓ User questions formatted as Obsidian callouts
 10. ✓ JSON-only ChatGPT messages wrapped in code fences when followed by another ChatGPT
-11. ✓ Hex color codes escaped to prevent Obsidian treating them as tags (NEW)
+11. ✓ Hex color codes escaped to prevent Obsidian treating them as tags
+12. ✓ Hex colors NOT escaped in frontmatter (backslashes break YAML)
+13. ✓ Double quotes in titles replaced with single quotes in frontmatter
 
 ### Key Technical Achievements
 - UTF-16LE JSON file handling with proper BOM detection
@@ -1060,6 +1062,83 @@ Inline code: `#ff0000` stays as `#ff0000`
 - Double-quoted aliases to ensure YAML string interpretation
 - Callout formatting for user questions with code fence awareness
 - JSON message detection with code fence wrapping
-- Hex color code escaping with code fence/backtick protection
+- Hex color code escaping with code fence/backtick protection (body only, not frontmatter)
+- Double-quote to single-quote replacement in frontmatter for YAML safety
 - Comprehensive test suite with unit, helper, and integration tests
 - All output verified against expected test-vault files
+
+---
+
+## Session 20 (Agent for Feature #40) - 2026-02-04
+
+### Feature Completed This Session: 1
+
+#### Feature #40: Fix the issues with backslashes and double quotes in the frontmatter
+- Status: PASSED
+- Two issues fixed:
+  1. Hex color codes in frontmatter are NO LONGER escaped with backslashes
+     - Backslashes break Obsidian's YAML parsing
+     - escapeHexColorCodes() now only applies to body content, not frontmatter
+  2. Double quotes in conversation titles are replaced with single quotes in frontmatter
+     - Double quotes within YAML values cause parsing issues in Obsidian
+     - Added sanitizeTitleForFrontmatter() helper function
+
+### Example Behavior
+
+**Issue 1: Hex Colors in Frontmatter**
+Conversation title: "Analyzing Color #B516DB"
+
+Before Fix (broken YAML):
+```yaml
+title: "Analyzing Color \#B516DB"
+```
+
+After Fix (valid YAML):
+```yaml
+title: "Analyzing Color #B516DB"
+```
+
+Body content still escapes colors: `# Analyzing Color \#B516DB`
+
+**Issue 2: Double Quotes in Frontmatter**
+Conversation title: Analyze "Moltbook" trend
+
+Before Fix (broken YAML):
+```yaml
+title: "Analyze \"Moltbook\" trend"
+```
+
+After Fix (valid YAML):
+```yaml
+title: "Analyze 'Moltbook' trend"
+```
+
+Body content keeps original: `# Analyze "Moltbook" trend`
+
+### Current Progress
+- **Passing: 40/40 features (100%)** 🎉
+- All features complete (including new Feature #40)
+
+### Test Results
+- All 167 tests passing (+11 new Feature #40 tests)
+- Infrastructure tests: ✓ (3 tests)
+- Helper function tests: ✓ (159 tests)
+- Integration tests: ✓ (5 tests)
+
+### Files Modified
+- export/markdown.js:
+  - Added sanitizeTitleForFrontmatter() function
+  - Modified conversationToMarkdown() to:
+    - Use frontmatterTitle (sanitized) for title and aliases
+    - Apply escapeHexColorCodes() only to body content
+- test/runner.mjs: Added 11 new Feature #40 tests, imported sanitizeTitleForFrontmatter
+
+### Git Commits Made This Session
+1. 2a69b38: feat: fix backslashes and double quotes in frontmatter (Feature #40)
+
+### Technical Notes
+- sanitizeTitleForFrontmatter() simply replaces " with '
+- escapeHexColorCodes() now runs AFTER frontmatter is combined with body
+- Body content built separately and has hex escaping applied
+- Frontmatter and body joined after escaping is applied to body only
+- Test files verified: Analyzing_Color_#B516DB_69831742.md, Analyze_Moltbook_trend_69831ded.md
