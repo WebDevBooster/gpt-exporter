@@ -32,7 +32,8 @@ import {
     extractBranchingInfo,
     generateFilename,
     formatUserContentAsCallout,
-    escapeHexColorCodes
+    escapeHexColorCodes,
+    sanitizeTitleForFrontmatter
 } from '../export/markdown.js';
 
 /**
@@ -2238,6 +2239,182 @@ async function runHelperTests() {
         const result = escapeHexColorCodes(input);
         // Color inside ~~~ fence should NOT be escaped, outside should be escaped
         assertEqual(result, 'Before\n~~~\n#ff0000\n~~~\nAfter \\#ff0000');
+    });
+
+    // Feature #40: Fix issues with backslashes and double quotes in frontmatter
+    // Issue 1: Hex color codes in frontmatter should NOT be escaped (backslashes break Obsidian YAML)
+    // Issue 2: Double quotes in title should be replaced with single quotes in frontmatter
+
+    await test('Feature #40: sanitizeTitleForFrontmatter replaces double quotes with single quotes', () => {
+        const result = sanitizeTitleForFrontmatter('Analyze "Moltbook" trend');
+        assertEqual(result, "Analyze 'Moltbook' trend", 'Double quotes should be replaced with single quotes');
+    });
+
+    await test('Feature #40: sanitizeTitleForFrontmatter handles multiple double quotes', () => {
+        const result = sanitizeTitleForFrontmatter('He said "hello" and "goodbye"');
+        assertEqual(result, "He said 'hello' and 'goodbye'", 'Multiple double quotes should be replaced');
+    });
+
+    await test('Feature #40: sanitizeTitleForFrontmatter preserves single quotes', () => {
+        const result = sanitizeTitleForFrontmatter("It's a test");
+        assertEqual(result, "It's a test", 'Single quotes should remain unchanged');
+    });
+
+    await test('Feature #40: sanitizeTitleForFrontmatter handles null', () => {
+        const result = sanitizeTitleForFrontmatter(null);
+        assertEqual(result, null, 'null should return null');
+    });
+
+    await test('Feature #40: sanitizeTitleForFrontmatter handles empty string', () => {
+        const result = sanitizeTitleForFrontmatter('');
+        assertEqual(result, '', 'Empty string should return empty string');
+    });
+
+    await test('Feature #40: frontmatter title uses single quotes instead of double quotes', () => {
+        const conv = {
+            title: 'Analyze "Moltbook" trend',
+            conversation_id: '69831ded-7a94-8392-9d84-1aeb5ae72260',
+            create_time: 1770200587.0,
+            update_time: 1770200987.0,
+            mapping: {
+                'root': { id: 'root', message: null, parent: undefined, children: ['user1'] },
+                'user1': { id: 'user1', parent: 'root', children: ['assistant1'],
+                    message: { author: { role: 'user' }, content: { content_type: 'text', parts: ['Test'] } }
+                },
+                'assistant1': { id: 'assistant1', parent: 'user1', children: [],
+                    message: { author: { role: 'assistant' }, content: { content_type: 'text', parts: ['Response'] } }
+                }
+            },
+            current_node: 'assistant1'
+        };
+
+        const result = conversationToMarkdown(conv);
+
+        // Frontmatter title should use single quotes
+        assert(result.content.includes('title: "Analyze \'Moltbook\' trend"'),
+            'Frontmatter title should replace double quotes with single quotes');
+        // Body title should keep original double quotes
+        assert(result.content.includes('# Analyze "Moltbook" trend'),
+            'Body title should keep original double quotes');
+    });
+
+    await test('Feature #40: frontmatter aliases use single quotes instead of double quotes', () => {
+        const conv = {
+            title: 'Analyze "Moltbook" trend',
+            conversation_id: '69831ded-7a94-8392-9d84-1aeb5ae72260',
+            create_time: 1770200587.0,
+            update_time: 1770200987.0,
+            mapping: {
+                'root': { id: 'root', message: null, parent: undefined, children: ['user1'] },
+                'user1': { id: 'user1', parent: 'root', children: [],
+                    message: { author: { role: 'user' }, content: { content_type: 'text', parts: ['Test'] } }
+                }
+            },
+            current_node: 'user1'
+        };
+
+        const result = conversationToMarkdown(conv);
+
+        // Second alias (title + ID) should use single quotes
+        assert(result.content.includes("\"Analyze 'Moltbook' trend 69831ded\""),
+            'Alias should replace double quotes with single quotes');
+    });
+
+    await test('Feature #40: hex colors in frontmatter are NOT escaped (Issue 1)', () => {
+        // Title contains a hex color code
+        const conv = {
+            title: 'Analyzing Color #B516DB',
+            conversation_id: '69831742-c888-8396-9db6-fd79a5c9b833',
+            create_time: 1770198852.0,
+            update_time: 1770199060.0,
+            mapping: {
+                'root': { id: 'root', message: null, parent: undefined, children: ['user1'] },
+                'user1': { id: 'user1', parent: 'root', children: ['assistant1'],
+                    message: { author: { role: 'user' }, content: { content_type: 'text', parts: ['Analyze color #B516DB'] } }
+                },
+                'assistant1': { id: 'assistant1', parent: 'user1', children: [],
+                    message: { author: { role: 'assistant' }, content: { content_type: 'text', parts: ['The color #B516DB is a vivid purple.'] } }
+                }
+            },
+            current_node: 'assistant1'
+        };
+
+        const result = conversationToMarkdown(conv);
+
+        // Frontmatter should NOT have escaped hex colors (no backslash)
+        assert(result.content.includes('title: "Analyzing Color #B516DB"'),
+            'Frontmatter title should NOT escape hex color');
+        assert(result.content.includes('"Analyzing Color #B516DB 69831742"'),
+            'Frontmatter alias should NOT escape hex color');
+
+        // Body content SHOULD have escaped hex colors
+        assert(result.content.includes('# Analyzing Color \\#B516DB'),
+            'Body title SHOULD escape hex color');
+        assert(result.content.includes('The color \\#B516DB is a vivid purple'),
+            'Body content SHOULD escape hex color');
+    });
+
+    await test('Feature #40: frontmatter separates correctly from body content for hex escape', () => {
+        // Verify the frontmatter ends with --- and body starts after that
+        const conv = {
+            title: 'Color Test #FF0000',
+            conversation_id: 'test1234-5678-9abc-def0',
+            create_time: 1770198852.0,
+            update_time: 1770199060.0,
+            mapping: {
+                'root': { id: 'root', message: null, parent: undefined, children: ['user1'] },
+                'user1': { id: 'user1', parent: 'root', children: [],
+                    message: { author: { role: 'user' }, content: { content_type: 'text', parts: ['Test'] } }
+                }
+            },
+            current_node: 'user1'
+        };
+
+        const result = conversationToMarkdown(conv);
+
+        // Split by the closing frontmatter marker
+        const parts = result.content.split('\n---\n');
+        assert(parts.length === 2, 'Content should have exactly one frontmatter section');
+
+        const frontmatter = parts[0] + '\n---';
+        const body = parts[1];
+
+        // Frontmatter should NOT have \\#
+        assert(!frontmatter.includes('\\#'), 'Frontmatter should NOT have escaped hex colors');
+        // Body should have \\#
+        assert(body.includes('\\#FF0000'), 'Body should have escaped hex colors');
+    });
+
+    await test('Feature #40: test-vault file Analyzing_Color_#B516DB_69831742.md has correct format', () => {
+        // Load the expected test file
+        const expectedPath = join(projectRoot, 'test-vault', "Tëster's_Pläýground_for_&#!,;$£_Frieñd̄žß", 'Analyzing_Color_#B516DB_69831742.md');
+        const content = readFileSync(expectedPath, 'utf8');
+
+        // Frontmatter should NOT have backslash escapes
+        assert(content.includes('title: "Analyzing Color #B516DB"'),
+            'Test-vault frontmatter should NOT have escaped hex color in title');
+        assert(content.includes('"Analyzing Color #B516DB 69831742"'),
+            'Test-vault frontmatter should NOT have escaped hex color in alias');
+
+        // Body SHOULD have escaped hex colors
+        assert(content.includes('# Analyzing Color \\#B516DB'),
+            'Test-vault body title SHOULD have escaped hex color');
+    });
+
+    await test('Feature #40: test-vault file Analyze_Moltbook_trend_69831ded.md has correct format', () => {
+        // Load the expected test file
+        const expectedPath = join(projectRoot, 'test-vault', "Tëster's_Pläýground_for_&#!,;$£_Frieñd̄žß", 'Analyze_Moltbook_trend_69831ded.md');
+        const content = readFileSync(expectedPath, 'utf8');
+
+        // Frontmatter should have single quotes (not double)
+        assert(content.includes("title: \"Analyze 'Moltbook' trend\""),
+            'Test-vault frontmatter should have single quotes in title');
+        assert(content.includes("\"Analyze 'Moltbook' trend 69831ded\""),
+            'Test-vault frontmatter should have single quotes in alias');
+
+        // Body should still have original double quotes
+        assert(content.includes('# Analyze "Moltbook" trend'),
+            'Test-vault body title should have original double quotes');
     });
 }
 

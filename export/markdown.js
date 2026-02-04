@@ -667,11 +667,25 @@ function extractMessages(conversation) {
 }
 
 /**
+ * Sanitize a title for use in frontmatter
+ * Replaces double quotes with single quotes to avoid YAML parsing issues in Obsidian
+ *
+ * @param {string} title - The title to sanitize
+ * @returns {string} Title safe for frontmatter (double quotes replaced with single quotes)
+ */
+function sanitizeTitleForFrontmatter(title) {
+    if (!title) return title;
+    return title.replace(/"/g, "'");
+}
+
+/**
  * Convert conversation to Obsidian-compatible Markdown
  */
 function conversationToMarkdown(conversation) {
     // Trim title and normalize encoding issues from UTF-16LE JSON files
     const title = normalizeEncoding((conversation.title || 'Untitled Conversation').trim());
+    // Sanitize title for frontmatter (replace double quotes with single quotes)
+    const frontmatterTitle = sanitizeTitleForFrontmatter(title);
     const modelSlug = detectModel(conversation);
     const modelDisplayName = getModelDisplayName(modelSlug);
     const created = formatTruncatedDate(conversation.create_time);
@@ -705,9 +719,10 @@ function conversationToMarkdown(conversation) {
     // Second alias: title + space + 8-character ID
     // Each alias is wrapped in double quotes to ensure Obsidian treats them as strings
     // (important when the first alias is just 8 hex digits, which could be interpreted as a number)
+    // Note: Use frontmatterTitle (with double quotes replaced by single quotes)
     const shortId = getShortConversationId(conversationId);
     const aliasesProperty = shortId
-        ? `aliases:\n  - "${shortId}"\n  - "${title} ${shortId}"`
+        ? `aliases:\n  - "${shortId}"\n  - "${frontmatterTitle} ${shortId}"`
         : 'aliases:\n  - ';
 
     // Build tags property in YAML list format
@@ -722,9 +737,10 @@ function conversationToMarkdown(conversation) {
 
     // Build YAML frontmatter (new format per spec)
     // Property order: title, aliases, parent, type, model-name, chronum, created, updated, tags, project, source
+    // Note: Use frontmatterTitle for title property (double quotes replaced with single quotes)
     const frontmatterLines = [
         '---',
-        `title: "${title.replace(/"/g, '\\"')}"`,
+        `title: "${frontmatterTitle}"`,
         aliasesProperty,
         parentProperty,
         'type: gpt-chat',
@@ -737,7 +753,7 @@ function conversationToMarkdown(conversation) {
 
     // Add project property if this is a project conversation
     if (projectName) {
-        frontmatterLines.push(`project: "${projectName.replace(/"/g, '\\"')}"`);
+        frontmatterLines.push(`project: "${projectName}"`);
     }
 
     frontmatterLines.push(`source: ${sourceUrl}`);
@@ -767,18 +783,24 @@ function conversationToMarkdown(conversation) {
         }
     });
 
-    // Combine everything
-    let markdown = [
-        frontmatter,
-        '',
+    // Build body content (title header + messages)
+    // Feature #39: Escape hex color codes ONLY in body content, NOT in frontmatter
+    // Backslashes in frontmatter break Obsidian's YAML parsing
+    let bodyContent = [
         `# ${title}`,
         '',
         messageBlocks.join('\n\n')
     ].join('\n');
 
-    // Feature #39: Escape hex color codes in markdown content (after all other transformations)
-    // This must run AFTER Feature #38 (JSON code fences) so we don't escape colors in code blocks
-    markdown = escapeHexColorCodes(markdown);
+    // Apply hex color code escaping only to body content
+    bodyContent = escapeHexColorCodes(bodyContent);
+
+    // Combine frontmatter and body
+    const markdown = [
+        frontmatter,
+        '',
+        bodyContent
+    ].join('\n');
 
     // Build file path with project folder if applicable
     // Use generateFilename for consistency with parent links
@@ -809,5 +831,6 @@ export {
     extractBranchingInfo,
     generateFilename,
     formatUserContentAsCallout,
-    escapeHexColorCodes
+    escapeHexColorCodes,
+    sanitizeTitleForFrontmatter
 };
