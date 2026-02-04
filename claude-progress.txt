@@ -1142,3 +1142,101 @@ Body content keeps original: `# Analyze "Moltbook" trend`
 - Body content built separately and has hex escaping applied
 - Frontmatter and body joined after escaping is applied to body only
 - Test files verified: Analyzing_Color_#B516DB_69831742.md, Analyze_Moltbook_trend_69831ded.md
+
+---
+
+## Session 21 (Agent for Feature #41) - 2026-02-04
+
+### Feature Completed This Session: 1
+
+#### Feature #41: Set code fences around image_group outputs in markdown
+- Status: PASSED
+- NEW FEATURE: Wrap image_group outputs from ChatGPT in code fences for better readability
+- ChatGPT outputs image_group blocks with special Unicode markers:
+  - `\ue200` = start marker
+  - `\ue202` = separator between "image_group" and the JSON content
+  - `\ue201` = end marker
+- The function strips these markers and wraps the content in code fences
+
+### Example Input/Output
+Input (with invisible Unicode markers):
+```
+\ue200image_group\ue202{"query":["test"]}\ue201
+```
+
+Output (cleaned and wrapped):
+```
+```
+image_group{"query":["test"]}
+```
+```
+
+### Implementation Details
+1. Added `wrapImageGroupInCodeFences()` helper function in export/markdown.js
+   - Uses regex to match the Unicode marker pattern
+   - Extracts the JSON content
+   - Returns content wrapped in code fences
+2. Applied the function in `conversationToMarkdown()` BEFORE hex color escaping
+   - This ensures colors inside the code fence are NOT escaped (protected by the fence)
+3. Fixed the test-vault expected file `Analyzing_Color_#B516DB_69831742.md`
+   - The file had raw Unicode markers; updated to have clean expected output
+
+### Tests Added (10 new tests)
+1. wrapImageGroupInCodeFences wraps simple image_group pattern
+2. wrapImageGroupInCodeFences handles multiple image_groups
+3. wrapImageGroupInCodeFences preserves text without image_group
+4. wrapImageGroupInCodeFences handles null/undefined
+5. wrapImageGroupInCodeFences handles complex JSON query
+6. wrapImageGroupInCodeFences handles aspect_ratio in JSON
+7. image_group is wrapped in code fences in conversationToMarkdown
+8. test-vault Analyzing_Color file has image_group in code fences
+9. hex colors inside image_group code fences are NOT escaped
+
+### Current Progress
+- **Passing: 41/41 features (100%)** 🎉
+- All features complete!
+
+### Test Results
+- All 176 tests passing (+10 new Feature #41 tests)
+- Infrastructure tests: ✓ (3 tests)
+- Helper function tests: ✓ (168 tests)
+- Integration tests: ✓ (5 tests)
+
+### Files Modified
+- export/markdown.js: Added wrapImageGroupInCodeFences(), exported it, applied in conversationToMarkdown()
+- test/runner.mjs: Added 10 new Feature #41 tests, imported wrapImageGroupInCodeFences
+- test-vault/*/Analyzing_Color_#B516DB_69831742.md: Fixed to have clean expected output (removed Unicode markers)
+
+### Git Commits Made This Session
+1. b47011c: feat: wrap image_group outputs in code fences (Feature #41)
+
+### Technical Notes
+- The Unicode markers \ue200, \ue202, \ue201 are ChatGPT's internal markers for image generation
+- These characters are invisible in most editors but appear in the JSON export
+- The wrapImageGroupInCodeFences() function is applied before hex color escaping
+- This ordering ensures colors inside the code fence are protected from escaping
+
+---
+
+## PROJECT COMPLETE 🎉
+
+### Final Summary
+- **Total Features:** 41
+- **Passing Features:** 41 (100%)
+- **Total Tests:** 176
+
+### All Implemented Modifications
+1. ✓ chronum property added to frontmatter (from create_time)
+2. ✓ Truncated timestamps (YYYY-MM-DDTHH:MM, no seconds/timezone)
+3. ✓ Sanitized project tags (lowercase, letters/numbers/hyphens only)
+4. ✓ Parent property with Obsidian internal links
+5. ✓ Unique ID suffix on filenames (8-char conversation ID)
+6. ✓ Aliases with ID and title+ID (wrapped in double quotes)
+7. ✓ Tags in YAML list format with project tag
+8. ✓ model property removed, model-name retained
+9. ✓ User questions formatted as Obsidian callouts
+10. ✓ JSON-only ChatGPT messages wrapped in code fences when followed by another ChatGPT
+11. ✓ Hex color codes escaped to prevent Obsidian treating them as tags
+12. ✓ Hex colors NOT escaped in frontmatter (backslashes break YAML)
+13. ✓ Double quotes in titles replaced with single quotes in frontmatter
+14. ✓ image_group outputs wrapped in code fences (stripped Unicode markers)
