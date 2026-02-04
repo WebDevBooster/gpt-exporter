@@ -33,7 +33,8 @@ import {
     generateFilename,
     formatUserContentAsCallout,
     escapeHexColorCodes,
-    sanitizeTitleForFrontmatter
+    sanitizeTitleForFrontmatter,
+    wrapImageGroupInCodeFences
 } from '../export/markdown.js';
 
 /**
@@ -2415,6 +2416,112 @@ async function runHelperTests() {
         // Body should still have original double quotes
         assert(content.includes('# Analyze "Moltbook" trend'),
             'Test-vault body title should have original double quotes');
+    });
+
+    // Feature #41: Wrap image_group outputs in code fences
+    await test('Feature #41: wrapImageGroupInCodeFences wraps simple image_group pattern', () => {
+        // Input with Unicode markers: \ue200image_group\ue202{JSON}\ue201
+        const input = 'Before\n\ue200image_group\ue202{"query":["test"]}\ue201\nAfter';
+        const result = wrapImageGroupInCodeFences(input);
+        const expected = 'Before\n```\nimage_group{"query":["test"]}\n```\nAfter';
+        assertEqual(result, expected, 'Should wrap image_group in code fences');
+    });
+
+    await test('Feature #41: wrapImageGroupInCodeFences handles multiple image_groups', () => {
+        const input = '\ue200image_group\ue202{"query":["first"]}\ue201\nText\n\ue200image_group\ue202{"query":["second"]}\ue201';
+        const result = wrapImageGroupInCodeFences(input);
+        assert(result.includes('```\nimage_group{"query":["first"]}\n```'), 'First image_group should be wrapped');
+        assert(result.includes('```\nimage_group{"query":["second"]}\n```'), 'Second image_group should be wrapped');
+    });
+
+    await test('Feature #41: wrapImageGroupInCodeFences preserves text without image_group', () => {
+        const input = 'Just regular text with no special patterns.';
+        const result = wrapImageGroupInCodeFences(input);
+        assertEqual(result, input, 'Text without image_group should be unchanged');
+    });
+
+    await test('Feature #41: wrapImageGroupInCodeFences handles null/undefined', () => {
+        assertEqual(wrapImageGroupInCodeFences(null), null, 'null should return null');
+        assertEqual(wrapImageGroupInCodeFences(undefined), undefined, 'undefined should return undefined');
+        assertEqual(wrapImageGroupInCodeFences(''), '', 'empty string should return empty string');
+    });
+
+    await test('Feature #41: wrapImageGroupInCodeFences handles complex JSON query', () => {
+        // Example from feature description
+        const input = '\ue200image_group\ue202{"query":["Gram positive bacteria diagram","Gram stain purple gram positive","gram positive cell wall thick peptidoglycan"], "num_per_query": 1}\ue201';
+        const result = wrapImageGroupInCodeFences(input);
+        assert(result.startsWith('```\nimage_group{'), 'Should start with code fence and image_group');
+        assert(result.endsWith('}\n```'), 'Should end with } and code fence');
+        assert(result.includes('"num_per_query": 1'), 'Should preserve JSON content');
+    });
+
+    await test('Feature #41: wrapImageGroupInCodeFences handles aspect_ratio in JSON', () => {
+        // Another example from feature description
+        const input = '\ue200image_group\ue202{"query":["beginner slackline setup low height park"], "aspect_ratio":"16:9"}\ue201';
+        const result = wrapImageGroupInCodeFences(input);
+        const expected = '```\nimage_group{"query":["beginner slackline setup low height park"], "aspect_ratio":"16:9"}\n```';
+        assertEqual(result, expected, 'Should preserve aspect_ratio in JSON');
+    });
+
+    await test('Feature #41: image_group is wrapped in code fences in conversationToMarkdown', () => {
+        // Create a conversation with an image_group message
+        const conv = {
+            title: 'Image Test',
+            conversation_id: 'test1234-image',
+            create_time: 1770126827.760625,
+            update_time: 1770126827.760625,
+            mapping: {
+                'root': { id: 'root', message: null, parent: undefined, children: ['user1'] },
+                'user1': { id: 'user1', parent: 'root', children: ['assistant1'],
+                    message: { author: { role: 'user' }, content: { content_type: 'text', parts: ['Show me colors'] } }
+                },
+                'assistant1': { id: 'assistant1', parent: 'user1', children: [],
+                    message: { author: { role: 'assistant' }, content: { content_type: 'text', parts: ['\ue200image_group\ue202{"query":["color swatches"]}\ue201\n\nHere are some colors.'] } }
+                }
+            },
+            current_node: 'assistant1'
+        };
+
+        const result = conversationToMarkdown(conv);
+
+        // The image_group should be wrapped in code fences
+        assert(result.content.includes('```\nimage_group{"query":["color swatches"]}\n```'),
+            'image_group should be wrapped in code fences in markdown output');
+        assert(result.content.includes('Here are some colors.'),
+            'Text after image_group should be preserved');
+    });
+
+    await test('Feature #41: test-vault Analyzing_Color file has image_group in code fences', () => {
+        // Load the expected test file - use same path that works in Feature #40 test
+        const expectedPath = join(projectRoot, 'test-vault', "Tëster's_Pläýground_for_&#!,;$£_Frieñd̄žß", 'Analyzing_Color_#B516DB_69831742.md');
+        const content = readFileSync(expectedPath, 'utf8');
+
+        // Verify the file has content (debugging)
+        assert(content.length > 0, 'File should have content');
+
+        // Check for the pattern: ```\nimage_group{...}\n```
+        // Using regex to be more flexible with whitespace
+        const codeBlockPattern = /```\s*\nimage_group\{/;
+        assert(codeBlockPattern.test(content),
+            'Test-vault file should have image_group inside code fences (opening)');
+
+        // Also verify closing
+        const closingPattern = /\}\s*\n```/;
+        assert(closingPattern.test(content),
+            'Test-vault file should have closing code fence after image_group');
+    });
+
+    await test('Feature #41: hex colors inside image_group code fences are NOT escaped', () => {
+        // When image_group is wrapped in code fences, hex colors inside should NOT be escaped
+        const input = '\ue200image_group\ue202{"query":["#FF0000 color swatch"]}\ue201';
+        const result = wrapImageGroupInCodeFences(input);
+
+        // First wrap, then escape hex colors (simulating the order in conversationToMarkdown)
+        const escaped = escapeHexColorCodes(result);
+
+        // The #FF0000 inside the code fence should NOT be escaped
+        assert(escaped.includes('#FF0000'), 'Hex color inside code fence should NOT be escaped');
+        assert(!escaped.includes('\\#FF0000'), 'Hex color should not have backslash escape');
     });
 }
 

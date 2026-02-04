@@ -679,6 +679,40 @@ function sanitizeTitleForFrontmatter(title) {
 }
 
 /**
+ * Wrap image_group outputs in code fences
+ *
+ * ChatGPT's image_group outputs appear with special Unicode markers:
+ * \ue200image_group\ue202{JSON}\ue201
+ *
+ * This function:
+ * 1. Detects lines containing this pattern
+ * 2. Removes the Unicode markers (\ue200, \ue202, \ue201)
+ * 3. Wraps the cleaned content in code fences
+ *
+ * Example input:  \ue200image_group\ue202{"query":["test"]}\ue201
+ * Example output: ```
+ *                 image_group{"query":["test"]}
+ *                 ```
+ *
+ * @param {string} text - The text to process
+ * @returns {string} Text with image_group blocks wrapped in code fences
+ */
+function wrapImageGroupInCodeFences(text) {
+    if (!text) return text;
+
+    // Pattern matches the full image_group line with Unicode markers
+    // \ue200 = start marker
+    // \ue202 = separator between "image_group" and the JSON
+    // \ue201 = end marker
+    const imageGroupPattern = /\ue200image_group\ue202(\{[^\ue201]*\})\ue201/g;
+
+    // Replace each match with the cleaned content wrapped in code fences
+    return text.replace(imageGroupPattern, (match, jsonContent) => {
+        return '```\nimage_group' + jsonContent + '\n```';
+    });
+}
+
+/**
  * Convert conversation to Obsidian-compatible Markdown
  */
 function conversationToMarkdown(conversation) {
@@ -792,6 +826,10 @@ function conversationToMarkdown(conversation) {
         messageBlocks.join('\n\n')
     ].join('\n');
 
+    // Feature #41: Wrap image_group outputs in code fences
+    // This must be done BEFORE hex color escaping so the code fences protect the content
+    bodyContent = wrapImageGroupInCodeFences(bodyContent);
+
     // Apply hex color code escaping only to body content
     bodyContent = escapeHexColorCodes(bodyContent);
 
@@ -832,5 +870,6 @@ export {
     generateFilename,
     formatUserContentAsCallout,
     escapeHexColorCodes,
-    sanitizeTitleForFrontmatter
+    sanitizeTitleForFrontmatter,
+    wrapImageGroupInCodeFences
 };
