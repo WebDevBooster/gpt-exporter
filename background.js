@@ -13,9 +13,6 @@ const ZIP_THRESHOLD = 3; // Bundle into ZIP if more than this many files
 const MAX_RETRIES = 3; // Retry failed requests
 const RETRY_BACKOFF = 10000; // 10 seconds base backoff on retry
 
-// Track pending download filenames (Chrome doesn't properly handle filenames for data URLs)
-const pendingDownloadFilenames = new Map();
-
 // Export state tracking - allows popup to query current progress
 let exportState = {
     isRunning: false,
@@ -67,16 +64,6 @@ function checkCancellation() {
         throw new Error('Export cancelled by user');
     }
 }
-
-// Listen for download filename determination to override it
-chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
-    const intendedFilename = pendingDownloadFilenames.get(downloadItem.id);
-    if (intendedFilename) {
-        console.log(`[BG] Overriding filename for download ${downloadItem.id}: "${intendedFilename}"`);
-        suggest({ filename: intendedFilename });
-        pendingDownloadFilenames.delete(downloadItem.id);
-    }
-});
 
 /**
  * Sleep utility
@@ -587,8 +574,6 @@ async function downloadFile(filename, content, mimeType = 'text/plain', folder =
             conflictAction: 'uniquify'
         });
 
-        // Store the intended filename for the onDeterminingFilename handler
-        pendingDownloadFilenames.set(downloadId, fullPath);
         console.log(`[BG] Download initiated: ${fullPath} (ID: ${downloadId})`);
 
         return downloadId;
@@ -638,7 +623,6 @@ async function createZipBundle(files, zipFilename, folder = '') {
             conflictAction: 'uniquify'
         });
 
-        pendingDownloadFilenames.set(downloadId, fullPath);
         console.log(`[BG] ZIP download initiated: ${fullPath} (ID: ${downloadId})`);
 
         return downloadId;
