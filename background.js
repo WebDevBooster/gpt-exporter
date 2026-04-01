@@ -7,6 +7,7 @@ import { conversationToMarkdown } from './export/markdown.js';
 import { createBackupJson } from './export/json.js';
 import { filterNeedingExport, markMultipleExported, getStats, clearHistory } from './sync/tracker.js';
 import { loadJSZip } from './lib/jszip-loader.js';
+import { parseChatGPTConversationUrl } from './lib/chatgpt-url.js';
 
 const RATE_LIMIT_DELAY = 4000; // 4 seconds between requests (avoid rate limiting)
 const ZIP_THRESHOLD = 3; // Bundle into ZIP if more than this many files
@@ -160,10 +161,12 @@ async function getExportTab() {
 }
 
 /**
- * Send message to content script using cached tab
+ * Send message to a specific ChatGPT tab
  */
-async function sendToContentScript(message) {
-    const tab = await getExportTab();
+async function sendToTab(tab, message) {
+    if (!tab?.id) {
+        throw new Error('No valid ChatGPT tab available.');
+    }
 
     // First try to send message directly
     try {
@@ -187,11 +190,23 @@ async function sendToContentScript(message) {
             const response = await chrome.tabs.sendMessage(tab.id, message);
             return response;
         } catch (injectError) {
-            // Clear the cached tab so we try a different one next time
             console.error(`[BG] Injection failed on tab ${tab.id}:`, injectError.message);
-            cachedExportTab = null;
-            throw new Error(`Failed to connect to ChatGPT tab. Please ensure you have a ChatGPT page open and try again.`);
+            throw new Error('Failed to connect to ChatGPT tab. Please ensure you have a ChatGPT page open and try again.');
         }
+    }
+}
+
+/**
+ * Send message to content script using cached tab
+ */
+async function sendToContentScript(message) {
+    const tab = await getExportTab();
+    try {
+        return await sendToTab(tab, message);
+    } catch (error) {
+        // Clear the cached tab so we try a different one next time
+        cachedExportTab = null;
+        throw error;
     }
 }
 
@@ -437,6 +452,142 @@ async function getAllConversationsMeta(onProgress = null, fetchLimit = 0) {
  */
 async function getConversation(id) {
     return sendToContentScript({ action: 'getConversation', id });
+}
+
+function extractProjectUUID(projectId) {
+    if (!projectId || typeof projectId !== 'string') {
+        return null;
+    }
+
+    const match = projectId.match(/^(g-p-[a-f0-9]{32})/);
+    return match ? match[1] : projectId;
+}
+
+function getConversationTargetFromTab(tab) {
+    if (!tab?.id || !tab.url) {
+        return null;
+    }
+
+    const parsed = parseChatGPTConversationUrl(tab.url);
+    if (!parsed) {
+        return null;
+    }
+
+    return {
+        tab,
+        conversationId: parsed.conversationId,
+        projectId: parsed.projectId
+    };
+}
+
+async function getCurrentConversationTarget() {
+    const focusedTabs = await chrome.tabs.query({
+        active: true,
+        lastFocusedWindow: true
+    });
+    const focusedTarget = getConversationTargetFromTab(focusedTabs[0]);
+    if (focusedTarget) {
+        return focusedTarget;
+    }
+
+    const activeTabs = await chrome.tabs.query({ active: true });
+    const matchingTargets = activeTabs
+        .map(getConversationTargetFromTab)
+        .filter(Boolean);
+
+    if (matchingTargets.length === 1) {
+        return matchingTargets[0];
+    }
+
+    if (matchingTargets.length > 1) {
+        throw new Error('Multiple active ChatGPT conversations found in different windows. Focus the one you want, then try again.');
+    }
+
+    throw new Error('No active ChatGPT conversation found. Open the chat you want to export, then try again.');
+}
+
+async function getProjectNameForCurrentConversation(tab, projectId) {
+    if (!projectId) {
+        return null;
+    }
+
+    try {
+        const response = await sendToTab(tab, { action: 'getProjectsList' });
+        if (response?.error) {
+            return null;
+        }
+
+        const apiProjectId = extractProjectUUID(projectId);
+
+        for (const project of response.items || []) {
+            const candidateId = project.gizmo?.id || project.id;
+            if (!candidateId) {
+                continue;
+            }
+
+            if (candidateId === projectId || extractProjectUUID(candidateId) === apiProjectId) {
+                return project.gizmo?.display?.name || project.display?.name || null;
+            }
+        }
+    } catch (error) {
+        console.warn('[BG] Project name lookup failed for current conversation:', error.message);
+    }
+
+    return null;
+}
+
+async function buildExportFiles(fullConversations, formats, reportProgress) {
+    const filesToBundle = [];
+
+    if (formats.markdown) {
+        for (let i = 0; i < fullConversations.length; i++) {
+            const md = conversationToMarkdown(fullConversations[i]);
+            filesToBundle.push({ filename: md.filename, content: md.content, mimeType: 'text/markdown' });
+            reportProgress('exporting', i + 1, fullConversations.length);
+        }
+    }
+
+    if (formats.json) {
+        const json = createBackupJson(fullConversations);
+        filesToBundle.push({ filename: json.filename, content: json.content, mimeType: 'application/json' });
+    }
+
+    return filesToBundle;
+}
+
+async function downloadExportFiles(filesToBundle, folder = '') {
+    const results = [];
+
+    if (filesToBundle.length > ZIP_THRESHOLD) {
+        updateExportState('zipping', 0, filesToBundle.length);
+        const today = new Date().toISOString().split('T')[0];
+        const zipFilename = `ChatGPT_Export_${today}.zip`;
+        await createZipBundle(filesToBundle, zipFilename, folder);
+        results.push({ type: 'zip', filename: zipFilename, fileCount: filesToBundle.length });
+        updateExportState('complete', filesToBundle.length, filesToBundle.length);
+        return results;
+    }
+
+    for (const file of filesToBundle) {
+        await downloadFile(file.filename, file.content, file.mimeType, folder);
+        results.push({ type: file.mimeType.includes('markdown') ? 'markdown' : 'json', filename: file.filename });
+    }
+
+    updateExportState('complete', filesToBundle.length, filesToBundle.length);
+    return results;
+}
+
+async function markConversationsAsExported(fullConversations) {
+    const exportedData = fullConversations.map(c => ({
+        id: c.conversation_id || c.id,
+        updateTime: c.update_time
+            ? (typeof c.update_time === 'number'
+                ? new Date(c.update_time * 1000).toISOString()
+                : c.update_time)
+            : new Date().toISOString()
+    }));
+
+    await markMultipleExported(exportedData);
 }
 
 /**
@@ -708,50 +859,10 @@ async function exportAll(formats, onProgress, folder = '', limit = 0) {
 
         reportProgress('exporting', 0, fullConversations.length);
 
-        const results = [];
-        const filesToBundle = [];
+        const filesToBundle = await buildExportFiles(fullConversations, formats, reportProgress);
+        const results = await downloadExportFiles(filesToBundle, folder);
 
-        // Generate all file contents
-        if (formats.markdown) {
-            for (let i = 0; i < fullConversations.length; i++) {
-                const md = conversationToMarkdown(fullConversations[i]);
-                filesToBundle.push({ filename: md.filename, content: md.content, mimeType: 'text/markdown' });
-                reportProgress('exporting', i + 1, fullConversations.length);
-            }
-        }
-
-        if (formats.json) {
-            const json = createBackupJson(fullConversations);
-            filesToBundle.push({ filename: json.filename, content: json.content, mimeType: 'application/json' });
-        }
-
-        // Decide whether to ZIP or download individually
-        if (filesToBundle.length > ZIP_THRESHOLD) {
-            reportProgress('zipping', 0, filesToBundle.length);
-            const today = new Date().toISOString().split('T')[0];
-            const zipFilename = `ChatGPT_Export_${today}.zip`;
-            await createZipBundle(filesToBundle, zipFilename, folder);
-            results.push({ type: 'zip', filename: zipFilename, fileCount: filesToBundle.length });
-            reportProgress('complete', filesToBundle.length, filesToBundle.length);
-        } else {
-            // Download files individually
-            for (const file of filesToBundle) {
-                await downloadFile(file.filename, file.content, file.mimeType, folder);
-                results.push({ type: file.mimeType.includes('markdown') ? 'markdown' : 'json', filename: file.filename });
-            }
-            reportProgress('complete', filesToBundle.length, filesToBundle.length);
-        }
-
-        const exportedData = fullConversations.map(c => ({
-            id: c.conversation_id || c.id,
-            updateTime: c.update_time
-                ? (typeof c.update_time === 'number'
-                    ? new Date(c.update_time * 1000).toISOString()
-                    : c.update_time)
-                : new Date().toISOString()
-        }));
-
-        await markMultipleExported(exportedData);
+        await markConversationsAsExported(fullConversations);
 
         return {
             totalExported: fullConversations.length,
@@ -845,53 +956,65 @@ async function exportNewUpdated(formats, onProgress, folder = '', limit = 0) {
 
         reportProgress('exporting', 0, fullConversations.length);
 
-        const results = [];
-        const filesToBundle = [];
+        const filesToBundle = await buildExportFiles(fullConversations, formats, reportProgress);
+        const results = await downloadExportFiles(filesToBundle, folder);
 
-        // Generate all file contents
-        if (formats.markdown) {
-            for (let i = 0; i < fullConversations.length; i++) {
-                const md = conversationToMarkdown(fullConversations[i]);
-                filesToBundle.push({ filename: md.filename, content: md.content, mimeType: 'text/markdown' });
-                reportProgress('exporting', i + 1, fullConversations.length);
-            }
-        }
-
-        if (formats.json) {
-            const json = createBackupJson(fullConversations);
-            filesToBundle.push({ filename: json.filename, content: json.content, mimeType: 'application/json' });
-        }
-
-        // Decide whether to ZIP or download individually
-        if (filesToBundle.length > ZIP_THRESHOLD) {
-            reportProgress('zipping', 0, filesToBundle.length);
-            const today = new Date().toISOString().split('T')[0];
-            const zipFilename = `ChatGPT_Export_${today}.zip`;
-            await createZipBundle(filesToBundle, zipFilename, folder);
-            results.push({ type: 'zip', filename: zipFilename, fileCount: filesToBundle.length });
-            reportProgress('complete', filesToBundle.length, filesToBundle.length);
-        } else {
-            // Download files individually
-            for (const file of filesToBundle) {
-                await downloadFile(file.filename, file.content, file.mimeType, folder);
-                results.push({ type: file.mimeType.includes('markdown') ? 'markdown' : 'json', filename: file.filename });
-            }
-            reportProgress('complete', filesToBundle.length, filesToBundle.length);
-        }
-
-        const exportedData = fullConversations.map(c => ({
-            id: c.conversation_id || c.id,
-            updateTime: c.update_time
-                ? (typeof c.update_time === 'number'
-                    ? new Date(c.update_time * 1000).toISOString()
-                    : c.update_time)
-                : new Date().toISOString()
-        }));
-
-        await markMultipleExported(exportedData);
+        await markConversationsAsExported(fullConversations);
 
         return {
             totalExported: fullConversations.length,
+            results
+        };
+    } finally {
+        exportState.isRunning = false;
+        exportState.phase = null;
+    }
+}
+
+/**
+ * Export only the currently active conversation tab
+ */
+async function exportCurrentConversation(formats, onProgress, folder = '') {
+    clearCachedTab();
+
+    exportState.isRunning = true;
+    exportState.cancelRequested = false;
+    exportState.startTime = Date.now();
+
+    const reportProgress = (phase, current, total) => {
+        updateExportState(phase, current, total);
+        onProgress({ phase, current, total });
+    };
+
+    try {
+        reportProgress('fetching_conversations', 0, 1);
+
+        const target = await getCurrentConversationTarget();
+        const conversation = await sendToTab(target.tab, {
+            action: 'getConversation',
+            id: target.conversationId
+        });
+
+        if (conversation.error) {
+            throw new Error(conversation.error);
+        }
+
+        if (target.projectId) {
+            conversation._projectId = target.projectId;
+            conversation._projectName = await getProjectNameForCurrentConversation(target.tab, target.projectId);
+        }
+
+        reportProgress('fetching_conversations', 1, 1);
+        reportProgress('exporting', 0, 1);
+
+        const fullConversations = [conversation];
+        const filesToBundle = await buildExportFiles(fullConversations, formats, reportProgress);
+        const results = await downloadExportFiles(filesToBundle, folder);
+
+        await markConversationsAsExported(fullConversations);
+
+        return {
+            totalExported: 1,
             results
         };
     } finally {
@@ -916,6 +1039,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 case 'getExportState':
                     return getExportState();
 
+                case 'getCurrentConversationTarget': {
+                    const target = await getCurrentConversationTarget();
+                    return {
+                        available: true,
+                        conversationId: target.conversationId,
+                        projectId: target.projectId
+                    };
+                }
+
                 case 'exportAll':
                     return await exportAll(
                         message.formats,
@@ -930,6 +1062,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                         (progress) => chrome.runtime.sendMessage({ type: 'progress', ...progress }),
                         message.downloadFolder || '',
                         message.limit || 0
+                    );
+
+                case 'exportCurrentConversation':
+                    return await exportCurrentConversation(
+                        message.formats,
+                        (progress) => chrome.runtime.sendMessage({ type: 'progress', ...progress }),
+                        message.downloadFolder || ''
                     );
 
                 case 'clearHistory':

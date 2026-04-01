@@ -12,6 +12,7 @@ const exportLimit = document.getElementById('exportLimit');
 const formatMarkdown = document.getElementById('formatMarkdown');
 const formatJson = document.getElementById('formatJson');
 const btnExportNew = document.getElementById('btnExportNew');
+const btnExportCurrent = document.getElementById('btnExportCurrent');
 const btnExportAll = document.getElementById('btnExportAll');
 const btnCancelProcess = document.getElementById('btnCancelProcess');
 const btnClearHistory = document.getElementById('btnClearHistory');
@@ -160,14 +161,35 @@ async function updateConnectionStatus() {
         connectionStatus.querySelector('.status-text').textContent = 'Connected';
         btnExportNew.disabled = false;
         btnExportAll.disabled = false;
+        btnExportCurrent.disabled = false;
         log('Connected to ChatGPT', 'success');
     } else {
         connectionStatus.classList.add('disconnected');
         connectionStatus.querySelector('.status-text').textContent = 'Not logged in';
         btnExportNew.disabled = true;
         btnExportAll.disabled = true;
+        btnExportCurrent.disabled = true;
         log('Not connected - please log in to chatgpt.com', 'error');
     }
+}
+
+/**
+ * Enable current-chat export only when the active tab is a concrete conversation
+ */
+async function updateCurrentConversationAvailability() {
+    if (!connectionStatus.classList.contains('connected')) {
+        btnExportCurrent.disabled = true;
+        btnExportCurrent.title = 'Log in to ChatGPT first';
+        return;
+    }
+
+    const result = await sendMessage({ action: 'getCurrentConversationTarget' });
+    const isAvailable = !!(result && result.available && result.conversationId);
+
+    btnExportCurrent.disabled = !isAvailable;
+    btnExportCurrent.title = isAvailable
+        ? 'Export only the active ChatGPT conversation tab'
+        : (result?.error || 'Open the ChatGPT conversation you want to export');
 }
 
 /**
@@ -274,10 +296,16 @@ async function handleExport(exportType) {
     await saveSettings();
 
     btnExportNew.disabled = true;
+    btnExportCurrent.disabled = true;
     btnExportAll.disabled = true;
 
     try {
-        const action = exportType === 'all' ? 'exportAll' : 'exportNewUpdated';
+        const actionMap = {
+            all: 'exportAll',
+            new: 'exportNewUpdated',
+            current: 'exportCurrentConversation'
+        };
+        const action = actionMap[exportType];
         log(`Calling action: ${action}`);
 
         const result = await sendMessage({
@@ -308,6 +336,7 @@ async function handleExport(exportType) {
     } finally {
         btnExportNew.disabled = false;
         btnExportAll.disabled = false;
+        await updateCurrentConversationAvailability();
     }
 }
 
@@ -325,6 +354,7 @@ async function handleCancelProcess() {
         hideProgress();
         btnExportNew.disabled = false;
         btnExportAll.disabled = false;
+        await updateCurrentConversationAvailability();
     } else {
         log(result?.error || 'No export running to cancel', 'info');
     }
@@ -357,6 +387,7 @@ exportLimit.addEventListener('change', saveSettings);
 
 // Event listeners
 btnExportNew.addEventListener('click', () => handleExport('new'));
+btnExportCurrent.addEventListener('click', () => handleExport('current'));
 btnExportAll.addEventListener('click', () => handleExport('all'));
 btnCancelProcess.addEventListener('click', handleCancelProcess);
 btnClearHistory.addEventListener('click', handleClearHistory);
@@ -377,6 +408,7 @@ async function checkExportState() {
 
         // Disable buttons while export is running
         btnExportNew.disabled = true;
+        btnExportCurrent.disabled = true;
         btnExportAll.disabled = true;
     }
 }
@@ -386,6 +418,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     log('GPT Exporter popup initialized');
     await loadSettings();
     await updateConnectionStatus();
+    await updateCurrentConversationAvailability();
     await updateStats();
     await checkExportState(); // Check if export is already running
 });

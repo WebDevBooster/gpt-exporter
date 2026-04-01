@@ -36,6 +36,7 @@ import {
     sanitizeTitleForFrontmatter,
     wrapImageGroupInCodeFences
 } from '../export/markdown.js';
+import { parseChatGPTConversationUrl } from '../lib/chatgpt-url.js';
 
 /**
  * Load a UTF-16LE encoded JSON file with BOM
@@ -239,6 +240,23 @@ async function runHelperTests() {
         const result = sanitizeFilename('Test: File?');
         assert(!result.includes(':'), 'Should not contain colon');
         assert(!result.includes('?'), 'Should not contain question mark');
+    });
+
+    await test('parseChatGPTConversationUrl parses regular conversation URLs', () => {
+        const result = parseChatGPTConversationUrl('https://chatgpt.com/c/abc123?model=gpt-5');
+        assertEqual(result?.conversationId, 'abc123');
+        assertEqual(result?.projectId, null);
+    });
+
+    await test('parseChatGPTConversationUrl parses project conversation URLs', () => {
+        const result = parseChatGPTConversationUrl('https://chatgpt.com/g/g-p-1234567890abcdef1234567890abcdef-sample/c/conv-789');
+        assertEqual(result?.projectId, 'g-p-1234567890abcdef1234567890abcdef-sample');
+        assertEqual(result?.conversationId, 'conv-789');
+    });
+
+    await test('parseChatGPTConversationUrl rejects non-conversation URLs', () => {
+        const result = parseChatGPTConversationUrl('https://chatgpt.com/');
+        assertEqual(result, null);
     });
 
     // getChronum tests
