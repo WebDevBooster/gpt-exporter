@@ -31,6 +31,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         } catch (error) {
             sendResponse({ success: false, error: error.message });
         }
+    } else if (message.action === 'create-zip-blob-url') {
+        // Build a compressed ZIP with the real JSZip (loaded via offscreen.html)
+        // and return a Blob URL for it. Async, so keep the channel open.
+        (async () => {
+            try {
+                const zip = new JSZip();
+                for (const file of message.files) {
+                    zip.file(file.filename, file.content);
+                }
+                const blob = await zip.generateAsync({
+                    type: 'blob',
+                    compression: 'DEFLATE',
+                    compressionOptions: { level: 6 }
+                });
+                sendResponse({ success: true, url: URL.createObjectURL(blob) });
+            } catch (error) {
+                sendResponse({ success: false, error: error.message });
+            }
+        })();
+        return true; // Keep message channel open for async sendResponse
     } else if (message.action === 'revoke-blob-url') {
         try {
             URL.revokeObjectURL(message.url);

@@ -31,9 +31,10 @@ async function fetchSession() {
 
 /**
  * Get access token (cached)
+ * @param {boolean} forceRefresh - Bypass the cache (e.g. after a 401)
  */
-async function getAccessToken() {
-    if (cachedAccessToken) {
+async function getAccessToken(forceRefresh = false) {
+    if (cachedAccessToken && !forceRefresh) {
         return cachedAccessToken;
     }
 
@@ -53,12 +54,18 @@ function getWorkspaceAccountId() {
 /**
  * Make an authenticated request to ChatGPT API
  */
-async function apiRequest(endpoint) {
+const FETCH_TIMEOUT_MS = 30000;
+
+async function apiRequest(endpoint, isRetryAfter401 = false) {
     const url = `${API_BASE}${endpoint}`;
     console.log(`[GPT-Exporter Content] Requesting: ${url}`);
 
+    // Abort hung requests so exports don't stall indefinitely
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
     try {
-        const accessToken = await getAccessToken();
+        const accessToken = await getAccessToken(isRetryAfter401);
         const accountId = getWorkspaceAccountId();
 
         const headers = {
@@ -77,10 +84,19 @@ async function apiRequest(endpoint) {
         const response = await fetch(url, {
             method: 'GET',
             credentials: 'include',
-            headers: headers
+            headers: headers,
+            signal: controller.signal
         });
 
         console.log(`[GPT-Exporter Content] Response status: ${response.status}`);
+
+        // Stale cached token: refresh it once and retry
+        if (response.status === 401 && !isRetryAfter401) {
+            console.warn('[GPT-Exporter Content] Got 401, refreshing access token and retrying...');
+            cachedAccessToken = null;
+            clearTimeout(timeoutId);
+            return apiRequest(endpoint, true);
+        }
 
         if (!response.ok) {
             const errorText = await response.text();
@@ -92,8 +108,15 @@ async function apiRequest(endpoint) {
         console.log(`[GPT-Exporter Content] Response data:`, data);
         return data;
     } catch (error) {
+        if (error.name === 'AbortError') {
+            const timeoutError = new Error(`Request timed out after ${FETCH_TIMEOUT_MS / 1000}s: ${endpoint}`);
+            console.error(`[GPT-Exporter Content] ${timeoutError.message}`);
+            throw timeoutError;
+        }
         console.error(`[GPT-Exporter Content] Fetch error:`, error);
         throw error;
+    } finally {
+        clearTimeout(timeoutId);
     }
 }
 

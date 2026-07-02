@@ -6,7 +6,6 @@
 import { conversationToMarkdown } from './export/markdown.js';
 import { createBackupJson } from './export/json.js';
 import { filterNeedingExport, markMultipleExported, getStats, clearHistory } from './sync/tracker.js';
-import { loadJSZip } from './lib/jszip-loader.js';
 import { parseChatGPTConversationUrl } from './lib/chatgpt-url.js';
 
 const RATE_LIMIT_DELAY = 4000; // 4 seconds between requests (avoid rate limiting)
@@ -23,6 +22,34 @@ let exportState = {
     startTime: null,
     cancelRequested: false
 };
+
+/**
+ * Service worker keepalive.
+ *
+ * MV3 suspends idle service workers after ~30s. Long exports spend most of
+ * their time sleeping between API requests, which counts as idle. Calling
+ * any extension API resets the idle timer, so while an export is running
+ * we ping a cheap API every 20s to keep the worker alive.
+ */
+let keepAliveIntervalId = null;
+
+function startKeepAlive() {
+    if (keepAliveIntervalId) {
+        return;
+    }
+    keepAliveIntervalId = setInterval(() => {
+        chrome.runtime.getPlatformInfo().catch(() => {});
+    }, 20000);
+    console.log('[BG] Keepalive started');
+}
+
+function stopKeepAlive() {
+    if (keepAliveIntervalId) {
+        clearInterval(keepAliveIntervalId);
+        keepAliveIntervalId = null;
+        console.log('[BG] Keepalive stopped');
+    }
+}
 
 /**
  * Update export state and broadcast to any open popups
@@ -810,21 +837,6 @@ async function downloadFile(filename, content, mimeType = 'text/plain', folder =
 async function createZipBundle(files, zipFilename, folder = '') {
     console.log(`[BG] Creating ZIP bundle with ${files.length} files`);
 
-    // Dynamically load JSZip
-    const JSZip = await loadJSZip();
-    const zip = new JSZip();
-
-    for (const file of files) {
-        zip.file(file.filename, file.content);
-    }
-
-    // Generate ZIP as base64
-    const zipContent = await zip.generateAsync({
-        type: 'base64',
-        compression: 'DEFLATE',
-        compressionOptions: { level: 6 }
-    });
-
     let fullPath = zipFilename;
     if (folder) {
         folder = folder.replace(/^[/\\]+|[/\\]+$/g, '');
@@ -832,9 +844,18 @@ async function createZipBundle(files, zipFilename, folder = '') {
     }
 
     try {
-        // Blob URL via offscreen document (data: URLs fail for large ZIPs)
-        const blobUrl = await createBlobUrl(zipContent, 'application/zip', true);
-        const downloadId = await downloadBlobUrl(blobUrl, fullPath);
+        // ZIP is built with real JSZip (DEFLATE compression) in the offscreen
+        // document, which returns a Blob URL (no data: URL size limit).
+        await ensureOffscreenDocument();
+        const response = await chrome.runtime.sendMessage({
+            target: 'offscreen',
+            action: 'create-zip-blob-url',
+            files: files.map(f => ({ filename: f.filename, content: f.content }))
+        });
+        if (!response || !response.success) {
+            throw new Error(`ZIP creation failed: ${response ? response.error : 'no response from offscreen document'}`);
+        }
+        const downloadId = await downloadBlobUrl(response.url, fullPath);
 
         console.log(`[BG] ZIP download initiated: ${fullPath} (ID: ${downloadId})`);
 
@@ -873,6 +894,7 @@ async function exportAll(formats, onProgress, folder = '', limit = 0) {
     exportState.isRunning = true;
     exportState.cancelRequested = false;
     exportState.startTime = Date.now();
+    startKeepAlive();
 
     const reportProgress = (phase, current, total) => {
         updateExportState(phase, current, total);
@@ -933,6 +955,7 @@ async function exportAll(formats, onProgress, folder = '', limit = 0) {
     } finally {
         exportState.isRunning = false;
         exportState.phase = null;
+        stopKeepAlive();
     }
 }
 
@@ -947,6 +970,7 @@ async function exportNewUpdated(formats, onProgress, folder = '', limit = 0) {
     exportState.isRunning = true;
     exportState.cancelRequested = false;
     exportState.startTime = Date.now();
+    startKeepAlive();
 
     const reportProgress = (phase, current, total) => {
         updateExportState(phase, current, total);
@@ -1030,6 +1054,7 @@ async function exportNewUpdated(formats, onProgress, folder = '', limit = 0) {
     } finally {
         exportState.isRunning = false;
         exportState.phase = null;
+        stopKeepAlive();
     }
 }
 
@@ -1042,6 +1067,7 @@ async function exportCurrentConversation(formats, onProgress, folder = '') {
     exportState.isRunning = true;
     exportState.cancelRequested = false;
     exportState.startTime = Date.now();
+    startKeepAlive();
 
     const reportProgress = (phase, current, total) => {
         updateExportState(phase, current, total);
@@ -1082,6 +1108,7 @@ async function exportCurrentConversation(formats, onProgress, folder = '') {
     } finally {
         exportState.isRunning = false;
         exportState.phase = null;
+        stopKeepAlive();
     }
 }
 
