@@ -688,6 +688,91 @@ async function getConversations(conversationIds, onProgress = null) {
 }
 
 /**
+ * Offscreen document helpers.
+ *
+ * Chrome's download system rejects data: URLs larger than ~2MB - the download
+ * fails with NETWORK_FAILED ("Check internet connection" in the UI). MV3
+ * service workers can't call URL.createObjectURL, so we delegate Blob URL
+ * creation to an offscreen document. This makes downloads work regardless
+ * of file size (fixes long conversations failing in "Export Current Chat").
+ */
+const OFFSCREEN_DOCUMENT_PATH = 'offscreen.html';
+let offscreenCreating = null;
+
+async function ensureOffscreenDocument() {
+    if (await chrome.offscreen.hasDocument()) {
+        return;
+    }
+    if (!offscreenCreating) {
+        offscreenCreating = chrome.offscreen.createDocument({
+            url: OFFSCREEN_DOCUMENT_PATH,
+            reasons: ['BLOBS'],
+            justification: 'Create Blob URLs for downloading exported files (data URLs fail for files larger than ~2MB)'
+        }).finally(() => {
+            offscreenCreating = null;
+        });
+    }
+    await offscreenCreating;
+}
+
+/**
+ * Create a Blob URL in the offscreen document.
+ * @param {string} content - File content (text, or base64 if isBase64 is true)
+ * @param {string} mimeType
+ * @param {boolean} isBase64
+ * @returns {Promise<string>} blob: URL
+ */
+async function createBlobUrl(content, mimeType, isBase64 = false) {
+    await ensureOffscreenDocument();
+    const response = await chrome.runtime.sendMessage({
+        target: 'offscreen',
+        action: 'create-blob-url',
+        content,
+        mimeType,
+        isBase64
+    });
+    if (!response || !response.success) {
+        throw new Error(`Failed to create blob URL: ${response ? response.error : 'no response from offscreen document'}`);
+    }
+    return response.url;
+}
+
+// Track blob URLs per download so we can revoke them when the download settles
+const pendingBlobUrls = new Map();
+
+chrome.downloads.onChanged.addListener((delta) => {
+    if (!delta.state || !pendingBlobUrls.has(delta.id)) {
+        return;
+    }
+    const state = delta.state.current;
+    if (state === 'complete' || state === 'interrupted') {
+        const url = pendingBlobUrls.get(delta.id);
+        pendingBlobUrls.delete(delta.id);
+        chrome.runtime.sendMessage({
+            target: 'offscreen',
+            action: 'revoke-blob-url',
+            url
+        }).catch(() => {
+            // Offscreen document may already be gone - nothing to revoke then
+        });
+    }
+});
+
+/**
+ * Start a download from a blob: URL and register cleanup.
+ */
+async function downloadBlobUrl(blobUrl, fullPath) {
+    const downloadId = await chrome.downloads.download({
+        url: blobUrl,
+        filename: fullPath,
+        saveAs: false,
+        conflictAction: 'uniquify'
+    });
+    pendingBlobUrls.set(downloadId, blobUrl);
+    return downloadId;
+}
+
+/**
  * Download a file using Chrome downloads API
  */
 async function downloadFile(filename, content, mimeType = 'text/plain', folder = '') {
@@ -701,29 +786,11 @@ async function downloadFile(filename, content, mimeType = 'text/plain', folder =
 
     console.log(`[BG] Full download path: "${fullPath}"`);
 
-    // Convert content to base64 data URL
-    // Handle large content by chunking to avoid call stack issues
-    const encoder = new TextEncoder();
-    const data = encoder.encode(content);
-
-    // Convert Uint8Array to base64 in chunks to handle large files
-    let base64 = '';
-    const chunkSize = 32768; // 32KB chunks
-    for (let i = 0; i < data.length; i += chunkSize) {
-        const chunk = data.slice(i, i + chunkSize);
-        base64 += btoa(String.fromCharCode.apply(null, chunk));
-    }
-
-    const dataUrl = `data:${mimeType};base64,${base64}`;
-    console.log(`[BG] Data URL length: ${dataUrl.length}`);
-
     try {
-        const downloadId = await chrome.downloads.download({
-            url: dataUrl,
-            filename: fullPath,
-            saveAs: false,
-            conflictAction: 'uniquify'
-        });
+        // Use a Blob URL created in the offscreen document. Unlike data:
+        // URLs, blob: URLs have no size limit in the downloads system.
+        const blobUrl = await createBlobUrl(content, mimeType, false);
+        const downloadId = await downloadBlobUrl(blobUrl, fullPath);
 
         console.log(`[BG] Download initiated: ${fullPath} (ID: ${downloadId})`);
 
@@ -764,15 +831,10 @@ async function createZipBundle(files, zipFilename, folder = '') {
         fullPath = `${folder}/${zipFilename}`;
     }
 
-    const dataUrl = `data:application/zip;base64,${zipContent}`;
-
     try {
-        const downloadId = await chrome.downloads.download({
-            url: dataUrl,
-            filename: fullPath,
-            saveAs: false,
-            conflictAction: 'uniquify'
-        });
+        // Blob URL via offscreen document (data: URLs fail for large ZIPs)
+        const blobUrl = await createBlobUrl(zipContent, 'application/zip', true);
+        const downloadId = await downloadBlobUrl(blobUrl, fullPath);
 
         console.log(`[BG] ZIP download initiated: ${fullPath} (ID: ${downloadId})`);
 

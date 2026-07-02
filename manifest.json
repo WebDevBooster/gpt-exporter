@@ -1,13 +1,14 @@
 {
   "manifest_version": 3,
   "name": "GPT Exporter",
-  "version": "2.1.2",
+  "version": "2.1.3",
   "description": "Export ChatGPT conversations as Markdown files for Obsidian",
   "permissions": [
     "storage",
     "downloads",
     "tabs",
-    "scripting"
+    "scripting",
+    "offscreen"
   ],
   "host_permissions": [
     "https://chatgpt.com/*",
