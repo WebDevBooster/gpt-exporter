@@ -37,6 +37,7 @@ import {
     wrapImageGroupInCodeFences
 } from '../export/markdown.js';
 import { parseChatGPTConversationUrl } from '../lib/chatgpt-url.js';
+import { createBackupJson } from '../export/json.js';
 
 /**
  * Load a UTF-16LE encoded JSON file with BOM
@@ -2752,6 +2753,117 @@ async function runIntegrationTests() {
 
         assert(expectedContent.includes('Branched from [[Diacritics_and_Accents_698065a8|Diacritics and Accents]]'),
             'Expected file should document the Branched from divider');
+    });
+
+    // "Include above 'Branched from' content" checkbox (conversationToMarkdown
+    // options.includeAboveBranchedFrom). Default/checked keeps today's output
+    // byte-identical; unchecked trims everything before the branch divider.
+    await test('includeAboveBranchedFrom: true output is byte-identical to no-options (default) output', () => {
+        const testFile = join(projectRoot, 'test-exports-and-logs', '4-branching-conversations_for_mock_API.json');
+        const conversations = loadUTF16LEJson(testFile);
+        const conv = conversations.find(c => c.conversation_id === '6981255a-0c54-8393-9176-98d226ea8c0c');
+        assert(conv, 'Should find Branch conversation');
+
+        const withOptionTrue = conversationToMarkdown(conv, { includeAboveBranchedFrom: true }).content;
+        const withNoOptions = conversationToMarkdown(conv).content;
+        assertEqual(withOptionTrue, withNoOptions,
+            'Explicit includeAboveBranchedFrom:true must match the no-options default');
+    });
+
+    await test('includeAboveBranchedFrom: false output matches the trimmed shape (frontmatter, blank, heading, blank, divider, post-branch only)', () => {
+        const testFile = join(projectRoot, 'test-exports-and-logs', '4-branching-conversations_for_mock_API.json');
+        const conversations = loadUTF16LEJson(testFile);
+        const conv = conversations.find(c => c.conversation_id === '6981255a-0c54-8393-9176-98d226ea8c0c');
+        assert(conv, 'Should find Branch conversation');
+
+        const checkedContent = conversationToMarkdown(conv, { includeAboveBranchedFrom: true }).content;
+        const uncheckedContent = conversationToMarkdown(conv, { includeAboveBranchedFrom: false }).content;
+
+        // Derive the expected trimmed markdown from the verified-correct
+        // "checked" output: frontmatter + blank + heading are kept
+        // byte-for-byte, and everything between the heading and the
+        // divider's leading "---" is removed.
+        const headingMarker = '\n\n# Branch · Diacritics and Accents\n\n';
+        const dividerMarker = '---\n\nBranched from [[Diacritics_and_Accents_698065a8|Diacritics and Accents]]\n\n---\n\n';
+
+        const headingIdx = checkedContent.indexOf(headingMarker);
+        const dividerIdx = checkedContent.indexOf(dividerMarker);
+        assert(headingIdx !== -1, 'heading marker must be present in checked output');
+        assert(dividerIdx !== -1, 'divider marker must be present in checked output');
+
+        const frontmatterAndHeading = checkedContent.slice(0, headingIdx + headingMarker.length);
+        const fromDividerOnward = checkedContent.slice(dividerIdx);
+        const expected = frontmatterAndHeading + fromDividerOnward;
+
+        assertEqual(uncheckedContent, expected,
+            'Unchecked output should be frontmatter + heading + divider + post-branch content only');
+    });
+
+    await test('includeAboveBranchedFrom: false removes pre-branch content entirely', () => {
+        const testFile = join(projectRoot, 'test-exports-and-logs', '4-branching-conversations_for_mock_API.json');
+        const conversations = loadUTF16LEJson(testFile);
+        const conv = conversations.find(c => c.conversation_id === '6981255a-0c54-8393-9176-98d226ea8c0c');
+        assert(conv, 'Should find Branch conversation');
+
+        const { content } = conversationToMarkdown(conv, { includeAboveBranchedFrom: false });
+        assert(!content.includes('What do you call those things'),
+            'Pre-branch user question should be absent when unchecked');
+        assert(!content.includes('Those marks are called'),
+            'Pre-branch assistant answer should be absent when unchecked');
+        assert(content.includes('Tell me more about diaeresis.'),
+            'Post-branch content should still be present when unchecked');
+    });
+
+    await test('includeAboveBranchedFrom: false preserves heading directly followed by the divider', () => {
+        const testFile = join(projectRoot, 'test-exports-and-logs', '4-branching-conversations_for_mock_API.json');
+        const conversations = loadUTF16LEJson(testFile);
+        const conv = conversations.find(c => c.conversation_id === '6981255a-0c54-8393-9176-98d226ea8c0c');
+        assert(conv, 'Should find Branch conversation');
+
+        const { content } = conversationToMarkdown(conv, { includeAboveBranchedFrom: false });
+        assert(
+            /# Branch · Diacritics and Accents\n\n---\n\nBranched from \[\[Diacritics_and_Accents_698065a8\|Diacritics and Accents\]\]\n\n---\n\n> \[!me:\]/.test(content),
+            'Heading must be directly followed by the divider with no pre-branch content in between'
+        );
+    });
+
+    await test('non-branched conversation is byte-identical whether includeAboveBranchedFrom is checked or unchecked', () => {
+        const testFile = join(projectRoot, 'test-exports-and-logs', '4-branching-conversations_for_mock_API.json');
+        const conversations = loadUTF16LEJson(testFile);
+        const parentConv = conversations.find(c => c.conversation_id === '698065a8-9160-8392-a810-0ae50700979b');
+        assert(parentConv, 'Should find parent (non-branch) conversation');
+
+        const checked = conversationToMarkdown(parentConv, { includeAboveBranchedFrom: true }).content;
+        const unchecked = conversationToMarkdown(parentConv, { includeAboveBranchedFrom: false }).content;
+        assertEqual(checked, unchecked,
+            'Non-branched conversations must be unaffected by the checkbox in either state');
+    });
+
+    await test('JSON backup export is unaffected by the includeAboveBranchedFrom markdown option', () => {
+        const testFile = join(projectRoot, 'test-exports-and-logs', '4-branching-conversations_for_mock_API.json');
+        const conversations = loadUTF16LEJson(testFile);
+        const conv = conversations.find(c => c.conversation_id === '6981255a-0c54-8393-9176-98d226ea8c0c');
+        assert(conv, 'Should find Branch conversation');
+
+        // Rendering markdown with either option value must not mutate the
+        // conversation object that createBackupJson also consumes.
+        const beforeSnapshot = JSON.stringify(conv);
+        conversationToMarkdown(conv, { includeAboveBranchedFrom: true });
+        conversationToMarkdown(conv, { includeAboveBranchedFrom: false });
+        assertEqual(JSON.stringify(conv), beforeSnapshot,
+            'conversationToMarkdown must not mutate the source conversation object');
+
+        // The JSON backup format has no notion of the markdown-only option,
+        // so its output must be identical no matter which markdown mode ran.
+        const jsonAfterTrue = createBackupJson([conv]).content;
+        conversationToMarkdown(conv, { includeAboveBranchedFrom: false });
+        const jsonAfterFalse = createBackupJson([conv]).content;
+
+        // exported_at is a live timestamp; strip it before comparing so the
+        // assertion isn't flaky across the two createBackupJson calls.
+        const stripTimestamp = (json) => json.replace(/"exported_at":\s*"[^"]*"/, '"exported_at":"STRIPPED"');
+        assertEqual(stripTimestamp(jsonAfterTrue), stripTimestamp(jsonAfterFalse),
+            'JSON backup content must be identical regardless of the markdown includeAboveBranchedFrom option');
     });
 }
 
