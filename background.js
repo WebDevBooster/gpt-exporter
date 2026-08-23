@@ -567,8 +567,9 @@ async function buildExportFiles(fullConversations, formats, reportProgress) {
     const filesToBundle = [];
 
     if (formats.markdown) {
+        const markdownOptions = { includeAboveBranchedFrom: !!formats.includeAboveBranchedFrom };
         for (let i = 0; i < fullConversations.length; i++) {
-            const md = conversationToMarkdown(fullConversations[i]);
+            const md = conversationToMarkdown(fullConversations[i], markdownOptions);
             filesToBundle.push({ filename: md.filename, content: md.content, mimeType: 'text/markdown' });
             reportProgress('exporting', i + 1, fullConversations.length);
         }

@@ -733,8 +733,20 @@ function wrapImageGroupInCodeFences(text) {
 
 /**
  * Convert conversation to Obsidian-compatible Markdown
+ *
+ * @param {Object} conversation - The conversation object (ChatGPT export shape)
+ * @param {Object} [options] - Export options
+ * @param {boolean} [options.includeAboveBranchedFrom=true] - When false (the
+ *   popup's "Include above 'Branched from' content" checkbox unchecked),
+ *   everything before the branch divider is removed from the exported body:
+ *   the output becomes frontmatter + blank line + `# <title>` heading,
+ *   followed directly by the `---\n\nBranched from [[...]]\n\n---\n\n` divider
+ *   and the post-branch content. Non-branched conversations are unaffected
+ *   either way. Defaults to true so existing callers that don't pass options
+ *   keep today's byte-identical output.
  */
-function conversationToMarkdown(conversation) {
+function conversationToMarkdown(conversation, options = {}) {
+    const includeAboveBranchedFrom = options.includeAboveBranchedFrom !== false;
     // Trim title and normalize encoding issues from UTF-16LE JSON files
     const title = normalizeEncoding((conversation.title || 'Untitled Conversation').trim());
     // Sanitize title for frontmatter (replace double quotes with single quotes)
@@ -847,13 +859,28 @@ function conversationToMarkdown(conversation) {
         }
     });
 
+    // "Include above 'Branched from' content" checkbox: when unchecked, drop
+    // every message block before the branch point. The block that carries
+    // the branch point already begins with the branchDivider string
+    // ("---\n\nBranched from [[...]]\n\n---\n\n"), so slicing the block array
+    // there reproduces the manually-trimmed shape exactly (heading, blank,
+    // divider, content) without any extra string surgery. Non-branched
+    // conversations have no branchedFrom message, so the slice is a no-op.
+    let blocksForBody = messageBlocks;
+    if (!includeAboveBranchedFrom) {
+        const branchIndex = messages.findIndex(msg => msg.branchedFrom);
+        if (branchIndex !== -1) {
+            blocksForBody = messageBlocks.slice(branchIndex);
+        }
+    }
+
     // Build body content (title header + messages)
     // Feature #39: Escape hex color codes ONLY in body content, NOT in frontmatter
     // Backslashes in frontmatter break Obsidian's YAML parsing
     let bodyContent = [
         `# ${title}`,
         '',
-        messageBlocks.join('\n\n')
+        blocksForBody.join('\n\n')
     ].join('\n');
 
     // Feature #41: Wrap image_group outputs in code fences

@@ -10,6 +10,7 @@ const lastSync = document.getElementById('lastSync');
 const downloadFolder = document.getElementById('downloadFolder');
 const exportLimit = document.getElementById('exportLimit');
 const formatMarkdown = document.getElementById('formatMarkdown');
+const includeAboveBranchedFrom = document.getElementById('includeAboveBranchedFrom');
 const formatJson = document.getElementById('formatJson');
 const btnExportNew = document.getElementById('btnExportNew');
 const btnExportCurrent = document.getElementById('btnExportCurrent');
@@ -110,6 +111,9 @@ async function loadSettings() {
 
     downloadFolder.value = settings.downloadFolder || '';
     exportLimit.value = settings.exportLimit || '';
+    // Default unchecked: exports omit content above the "Branched from"
+    // divider unless the user opts back in.
+    includeAboveBranchedFrom.checked = settings.includeAboveBranchedFrom || false;
     log('Settings loaded');
 }
 
@@ -119,7 +123,8 @@ async function loadSettings() {
 async function saveSettings() {
     const settings = {
         downloadFolder: downloadFolder.value.trim(),
-        exportLimit: parseInt(exportLimit.value) || 0
+        exportLimit: parseInt(exportLimit.value) || 0,
+        includeAboveBranchedFrom: includeAboveBranchedFrom.checked
     };
     await chrome.storage.local.set({ [SETTINGS_KEY]: settings });
     log('Settings saved');
@@ -211,7 +216,8 @@ function getExportOptions() {
     return {
         formats: {
             markdown: formatMarkdown.checked,
-            json: formatJson.checked
+            json: formatJson.checked,
+            includeAboveBranchedFrom: includeAboveBranchedFrom.checked
         },
         downloadFolder: downloadFolder.value.trim(),
         limit: parseInt(exportLimit.value) || 0
@@ -384,6 +390,7 @@ chrome.runtime.onMessage.addListener((message) => {
 // Auto-save settings on change
 downloadFolder.addEventListener('change', saveSettings);
 exportLimit.addEventListener('change', saveSettings);
+includeAboveBranchedFrom.addEventListener('change', saveSettings);
 
 // Event listeners
 btnExportNew.addEventListener('click', () => handleExport('new'));
