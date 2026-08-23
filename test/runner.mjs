@@ -2688,6 +2688,71 @@ async function runIntegrationTests() {
         assertEqual(result.filename, 'English_Checking_&_Tutoring/Branch_·_Diacritics_and_Accents_6981255a.md',
             'Filename should match expected with middle dot');
     });
+
+    // "Branched from" divider: rendered in the body at the branch point,
+    // mirroring ChatGPT's UI divider, with an Obsidian link to the parent note
+    await test('Branched from divider appears at branch point with parent link', () => {
+        const testFile = join(projectRoot, 'test-exports-and-logs', '4-branching-conversations_for_mock_API.json');
+        const conversations = loadUTF16LEJson(testFile);
+
+        const conv = conversations.find(c => c.conversation_id === '6981255a-0c54-8393-9176-98d226ea8c0c');
+        assert(conv, 'Should find Branch conversation');
+
+        const result = conversationToMarkdown(conv);
+        const content = result.content;
+
+        const expectedDivider = '---\n\nBranched from [[Diacritics_and_Accents_698065a8|Diacritics and Accents]]\n\n---';
+        assert(content.includes(expectedDivider),
+            'Should contain the Branched from divider with aliased parent link');
+
+        // Divider must sit before the first NEW message of the branch
+        const dividerIdx = content.indexOf('Branched from [[');
+        const firstNewMsgIdx = content.indexOf('Tell me more about diaeresis.');
+        assert(firstNewMsgIdx > -1, 'Should contain the first new branch message');
+        assert(dividerIdx > -1 && dividerIdx < firstNewMsgIdx,
+            'Divider should appear before the first new message of the branch');
+
+        // Exactly one divider for a single-level branch
+        const count = (content.match(/Branched from \[\[/g) || []).length;
+        assertEqual(count, 1, 'Should contain exactly one Branched from divider');
+    });
+
+    await test('Branched from divider absent in non-branch conversations', () => {
+        const testFile = join(projectRoot, 'test-exports-and-logs', '4-branching-conversations_for_mock_API.json');
+        const conversations = loadUTF16LEJson(testFile);
+
+        const parentConv = conversations.find(c => c.conversation_id === '698065a8-9160-8392-a810-0ae50700979b');
+        assert(parentConv, 'Should find parent conversation');
+
+        const result = conversationToMarkdown(parentConv);
+        assert(!result.content.includes('Branched from'),
+            'Parent (non-branch) conversation should have no Branched from divider');
+    });
+
+    await test('Branched from divider links to immediate parent in nested branches', () => {
+        const testFile = join(projectRoot, 'test-exports-and-logs', '4-branching-conversations_for_mock_API.json');
+        const conversations = loadUTF16LEJson(testFile);
+
+        // Branch of a branch: divider must link to the IMMEDIATE parent.
+        // (The inherited marker node lacks id/title metadata in the copied
+        // history, so only the actual branch point produces a divider.)
+        const conv = conversations.find(c => c.conversation_id === '698127b0-17a8-838c-9af5-be34372f41c2');
+        assert(conv, 'Should find branch-of-branch conversation');
+
+        const result = conversationToMarkdown(conv);
+        const content = result.content;
+
+        assert(content.includes('Branched from [[Branch_·_Diacritics_and_Accents_6981269e|Branch · Diacritics and Accents]]'),
+            'Divider should link to the immediate parent with normalized title');
+    });
+
+    await test('expected test-vault branch file contains the Branched from divider', () => {
+        const expectedPath = join(projectRoot, 'test-vault', 'English_Checking_&_Tutoring', 'Branch_·_Diacritics_and_Accents_6981255a.md');
+        const expectedContent = readFileSync(expectedPath, 'utf8');
+
+        assert(expectedContent.includes('Branched from [[Diacritics_and_Accents_698065a8|Diacritics and Accents]]'),
+            'Expected file should document the Branched from divider');
+    });
 }
 
 /**

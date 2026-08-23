@@ -638,6 +638,24 @@ function extractMessages(conversation) {
             break;
         }
 
+        // Branch point detection: a node carrying branching metadata is the
+        // last message inherited from the parent conversation. The "Branched
+        // from" divider belongs AFTER it, i.e. before the first message that
+        // follows it. Since we traverse leaf -> root, all following messages
+        // are already collected; the nearest one is the first user/assistant
+        // entry in collectedNodes. Checked before collecting this node itself,
+        // and independent of whether this node's message is skipped/empty.
+        const branchMeta = node.message?.metadata;
+        if (branchMeta?.branching_from_conversation_id && branchMeta?.branching_from_conversation_title) {
+            const target = collectedNodes.find(m => m.role === 'user' || m.role === 'assistant');
+            if (target && !target.branchedFrom) {
+                target.branchedFrom = {
+                    parentId: branchMeta.branching_from_conversation_id,
+                    parentTitle: branchMeta.branching_from_conversation_title
+                };
+            }
+        }
+
         // Process this node if it has a valid message and shouldn't be skipped
         if (node.message && node.message.content && !shouldSkipMessage(node.message)) {
             const msg = node.message;
@@ -653,7 +671,8 @@ function extractMessages(conversation) {
                 // Prepend to maintain correct order (we're traversing backwards)
                 collectedNodes.unshift({
                     role: role,
-                    content: text.trim()
+                    content: text.trim(),
+                    branchedFrom: null
                 });
             }
         }
@@ -798,10 +817,21 @@ function conversationToMarkdown(conversation) {
     // Build message content
     const messages = extractMessages(conversation);
     const messageBlocks = messages.map((msg, index) => {
+        // "Branched from" divider: rendered before the first message that
+        // follows the branch point, mirroring ChatGPT's UI divider. Links to
+        // the parent note via the shared filename generator so the Obsidian
+        // link resolves, with the parent title as display text.
+        let branchDivider = '';
+        if (msg.branchedFrom) {
+            const parentTitle = normalizeEncoding(msg.branchedFrom.parentTitle).trim();
+            const parentFilename = generateFilename(parentTitle, msg.branchedFrom.parentId);
+            branchDivider = `---\n\nBranched from [[${parentFilename}|${parentTitle}]]\n\n---\n\n`;
+        }
+
         if (msg.role === 'user') {
             // Format user messages as Obsidian callouts
             const calloutContent = formatUserContentAsCallout(msg.content);
-            return `> [!me:]\n${calloutContent}`;
+            return `${branchDivider}> [!me:]\n${calloutContent}`;
         } else {
             // Check if this is a JSON-only message followed by another ChatGPT message
             // If so, wrap it in code fences (Feature #38)
@@ -811,9 +841,9 @@ function conversationToMarkdown(conversation) {
             const isFollowedByChatGPT = nextMsg && nextMsg.role === 'assistant';
 
             if (isJsonObject && isFollowedByChatGPT) {
-                return `#### ChatGPT:\n\`\`\`\n${msg.content}\n\`\`\``;
+                return `${branchDivider}#### ChatGPT:\n\`\`\`\n${msg.content}\n\`\`\``;
             }
-            return `#### ChatGPT:\n${msg.content}`;
+            return `${branchDivider}#### ChatGPT:\n${msg.content}`;
         }
     });
 
