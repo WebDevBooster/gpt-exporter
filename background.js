@@ -7,6 +7,7 @@ import { conversationToMarkdown } from './export/markdown.js';
 import { createBackupJson } from './export/json.js';
 import { filterNeedingExport, markMultipleExported, getStats, clearHistory } from './sync/tracker.js';
 import { parseChatGPTConversationUrl } from './lib/chatgpt-url.js';
+import { createDownloadManager } from './lib/downloads.js';
 
 const RATE_LIMIT_DELAY = 4000; // 4 seconds between requests (avoid rate limiting)
 const ZIP_THRESHOLD = 3; // Bundle into ZIP if more than this many files
@@ -80,6 +81,7 @@ function cancelExport() {
         return { success: false, error: 'No export is currently running' };
     }
     exportState.cancelRequested = true;
+    downloadManager.cancelPending();
     console.log('[BG] Export cancellation requested');
     return { success: true };
 }
@@ -765,39 +767,22 @@ async function createBlobUrl(content, mimeType, isBase64 = false) {
     return response.url;
 }
 
-// Track blob URLs per download so we can revoke them when the download settles
-const pendingBlobUrls = new Map();
-
-chrome.downloads.onChanged.addListener((delta) => {
-    if (!delta.state || !pendingBlobUrls.has(delta.id)) {
-        return;
-    }
-    const state = delta.state.current;
-    if (state === 'complete' || state === 'interrupted') {
-        const url = pendingBlobUrls.get(delta.id);
-        pendingBlobUrls.delete(delta.id);
-        chrome.runtime.sendMessage({
-            target: 'offscreen',
-            action: 'revoke-blob-url',
-            url
-        }).catch(() => {
-            // Offscreen document may already be gone - nothing to revoke then
-        });
-    }
+const downloadManager = createDownloadManager({
+    downloads: chrome.downloads,
+    isCancelled: () => exportState.cancelRequested,
+    revokeBlobUrl: url => chrome.runtime.sendMessage({
+        target: 'offscreen',
+        action: 'revoke-blob-url',
+        url
+    })
 });
 
 /**
- * Start a download from a blob: URL and register cleanup.
+ * Download a blob and wait for successful terminal completion, including cleanup.
  */
 async function downloadBlobUrl(blobUrl, fullPath) {
-    const downloadId = await chrome.downloads.download({
-        url: blobUrl,
-        filename: fullPath,
-        saveAs: false,
-        conflictAction: 'uniquify'
-    });
-    pendingBlobUrls.set(downloadId, blobUrl);
-    return downloadId;
+    updateExportState('saving', 0, 1);
+    return downloadManager.download(blobUrl, fullPath);
 }
 
 /**
@@ -820,7 +805,7 @@ async function downloadFile(filename, content, mimeType = 'text/plain', folder =
         const blobUrl = await createBlobUrl(content, mimeType, false);
         const downloadId = await downloadBlobUrl(blobUrl, fullPath);
 
-        console.log(`[BG] Download initiated: ${fullPath} (ID: ${downloadId})`);
+        console.log(`[BG] Download complete: ${fullPath} (ID: ${downloadId})`);
 
         return downloadId;
     } catch (error) {
@@ -858,7 +843,7 @@ async function createZipBundle(files, zipFilename, folder = '') {
         }
         const downloadId = await downloadBlobUrl(response.url, fullPath);
 
-        console.log(`[BG] ZIP download initiated: ${fullPath} (ID: ${downloadId})`);
+        console.log(`[BG] ZIP download complete: ${fullPath} (ID: ${downloadId})`);
 
         return downloadId;
     } catch (error) {

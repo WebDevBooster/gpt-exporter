@@ -4,7 +4,8 @@
   "description": "Test suite for GPT Exporter Chrome extension markdown export",
   "type": "module",
   "scripts": {
-    "test": "node test/runner.mjs",
+    "test": "node test/runner.mjs && npm run test:downloads",
+    "test:downloads": "node --test test/download-completion.test.mjs test/download-manager.test.mjs",
     "test:infra": "node test/runner.mjs --infra",
     "test:helpers": "node test/runner.mjs --helpers",
     "test:integration": "node test/runner.mjs --integration"

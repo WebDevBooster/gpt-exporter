@@ -5,8 +5,11 @@ This test suite validates the markdown export functionality for the GPT Exporter
 ## Quick Start
 
 ```bash
-# Run all tests
-node test/runner.mjs
+# Run all tests (formatting fixtures plus download regressions)
+npm test
+
+# Run download regressions without private formatting fixtures
+npm run test:downloads
 
 # Or use the init script
 ./init.sh
@@ -14,11 +17,24 @@ node test/runner.mjs
 
 ## Test Approach
 
-Since coding agents cannot install or run Chrome extensions directly, testing is done via:
+The formatting runner uses fixture data and expected files. Download regressions exercise the production background workflows and download manager with controlled Chrome APIs:
 
 1. **Mock API Testing** - Using JSON files that contain real ChatGPT API response structures
 2. **Output Comparison** - Comparing generated .md files against expected outputs in `test-vault/`
 3. **Unit Testing** - Testing individual helper functions
+
+## Download Completion Tests
+
+`npm run test:downloads` runs 20 checks using synthetic conversations. These cover
+Current, All and New/Updated exports; pending, interrupted and completed saves;
+incremental retries; multiple formats; ZIPs; cancellation; early completion;
+failed starts; query failures and deadlines. Export history must remain unchanged
+until every required output has completed. These tests require no ChatGPT login
+or private fixture directories.
+
+The automated API fixtures do not replace browser checks. A disposable Chrome
+profile can load the extension and exercise the same manager against a local
+HTTP server for successful transfers, cancellation and broken connections.
 
 ## Mock Data Files
 
