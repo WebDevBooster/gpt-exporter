@@ -1,5 +1,18 @@
 # GPT Exporter
 
+### Download completion (2.2.1)
+
+An export succeeds and updates “New/Updated” history only after Chrome finishes
+saving every requested file or the ZIP. Interrupted, cancelled or failed saves do
+not update history, so those conversations remain eligible for another export.
+The popup shows “Saving export” while Chrome writes the file. Cancel Export also
+cancels an active export download. A started download that has not finished after
+ten minutes fails without updating history.
+
+This does not repair history created by earlier versions. If an earlier export
+was reported as successful but its file is missing, re-export those conversations
+using Current or All, or clear export history before using New/Updated.
+
 Chrome browser extension to easily export/download either all or only new/updated ChatGPT conversations as **Markdown files** optimized for [Obsidian](https://obsidian.md/). 
 
 ### Obsidian-friendly 

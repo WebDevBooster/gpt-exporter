@@ -254,6 +254,10 @@ function showProgress(phase, current, total) {
             phaseText = `Export complete! ${total} files`;
             percent = 100;
             break;
+        case 'saving':
+            phaseText = 'Saving export... waiting for Chrome to finish';
+            percent = 95;
+            break;
         default:
             phaseText = 'Processing...';
             percent = 50;
