@@ -1,3 +1,6 @@
+(() => {
+if (globalThis.__gptExporterVersion === '2.3.0') return;
+globalThis.__gptExporterVersion = '2.3.0';
 /**
  * Content Script - runs in the context of chatgpt.com
  * This script can access the page's cookies for authenticated API calls
@@ -8,8 +11,16 @@
 const API_BASE = 'https://chatgpt.com/backend-api';
 const SESSION_API = 'https://chatgpt.com/api/auth/session';
 
-// Cached access token
+// Cached only within this page's authenticated session.
 let cachedAccessToken = null;
+let cachedUserId = null;
+
+function httpError(response, detail = '') {
+    return Object.assign(new Error(`API Error: ${response.status} ${response.statusText}`), {
+        status: response.status, retryAfter: response.headers.get('Retry-After'),
+        detail: detail.slice(0, 500)
+    });
+}
 
 /**
  * Fetch session to get access token
@@ -17,11 +28,11 @@ let cachedAccessToken = null;
 async function fetchSession() {
     console.log('[GPT-Exporter] Fetching session...');
     const response = await fetch(SESSION_API, {
-        credentials: 'include'
+        credentials: 'include', signal: AbortSignal.timeout(30000)
     });
 
     if (!response.ok) {
-        throw new Error(`Session fetch failed: ${response.status}`);
+        throw httpError(response);
     }
 
     const session = await response.json();
@@ -40,6 +51,8 @@ async function getAccessToken(forceRefresh = false) {
 
     const session = await fetchSession();
     cachedAccessToken = session.accessToken;
+    cachedUserId = session.user?.id;
+    if (!cachedAccessToken || !cachedUserId) throw new Error('Log in to ChatGPT, then resume the export.');
     return cachedAccessToken;
 }
 
@@ -56,7 +69,7 @@ function getWorkspaceAccountId() {
  */
 const FETCH_TIMEOUT_MS = 30000;
 
-async function apiRequest(endpoint, isRetryAfter401 = false) {
+async function apiRequest(endpoint, expectedAccount, isRetryAfter401 = false) {
     const url = `${API_BASE}${endpoint}`;
     console.log(`[GPT-Exporter Content] Requesting: ${url}`);
 
@@ -67,6 +80,9 @@ async function apiRequest(endpoint, isRetryAfter401 = false) {
     try {
         const accessToken = await getAccessToken(isRetryAfter401);
         const accountId = getWorkspaceAccountId();
+        if (expectedAccount && expectedAccount !== `${cachedUserId}:${accountId || 'personal'}`) {
+            throw new Error('ChatGPT account or workspace changed. Switch back before resuming.');
+        }
 
         const headers = {
             'Accept': 'application/json',
@@ -95,17 +111,17 @@ async function apiRequest(endpoint, isRetryAfter401 = false) {
             console.warn('[GPT-Exporter Content] Got 401, refreshing access token and retrying...');
             cachedAccessToken = null;
             clearTimeout(timeoutId);
-            return apiRequest(endpoint, true);
+            return apiRequest(endpoint, expectedAccount, true);
         }
 
         if (!response.ok) {
             const errorText = await response.text();
             console.error(`[GPT-Exporter Content] Error response:`, errorText);
-            throw new Error(`API Error: ${response.status} ${response.statusText}`);
+            throw httpError(response, errorText);
         }
 
         const data = await response.json();
-        console.log(`[GPT-Exporter Content] Response data:`, data);
+        // Conversation bodies stay out of console logs.
         return data;
     } catch (error) {
         if (error.name === 'AbortError') {
@@ -120,158 +136,28 @@ async function apiRequest(endpoint, isRetryAfter401 = false) {
     }
 }
 
-/**
- * Get conversation list (main/non-project conversations)
- */
-async function getConversationsList(offset = 0, limit = 28) {
-    return apiRequest(`/conversations?offset=${offset}&limit=${limit}`);
-}
-
-/**
- * Get single conversation
- */
-async function getConversation(id) {
-    return apiRequest(`/conversation/${id}`);
-}
-
-/**
- * Fetch all projects from the snorlax/sidebar API with cursor pagination
- * This endpoint returns all projects, not just the visible 5
- */
-async function fetchAllProjectsFromSidebar() {
-    const projects = [];
-    let cursor = null;
-    const seenIds = new Set();
-
-    while (true) {
-        let url = '/gizmos/snorlax/sidebar?conversations_per_gizmo=5&owned_only=true';
-        if (cursor) {
-            url += `&cursor=${encodeURIComponent(cursor)}`;
-        }
-
-        console.log(`[GPT-Exporter] Fetching projects from snorlax/sidebar${cursor ? ' (next page)' : ''}...`);
-        const response = await apiRequest(url);
-
-        console.log(`[GPT-Exporter] snorlax/sidebar response:`, JSON.stringify(response).substring(0, 500));
-
-        // Response has 'items' array with gizmo objects
-        // Structure is: item.gizmo.gizmo.id (double-nested!)
-        if (response.items && Array.isArray(response.items)) {
-            for (const item of response.items) {
-                // Handle double-nested structure: item.gizmo.gizmo
-                const innerGizmo = item.gizmo?.gizmo || item.gizmo || item;
-                const id = innerGizmo.id || item.gizmo?.id || item.id;
-
-                // Only include projects (IDs starting with g-p-)
-                if (id && id.startsWith('g-p-') && !seenIds.has(id)) {
-                    seenIds.add(id);
-                    const displayName = innerGizmo.display?.name || innerGizmo.name || id;
-                    projects.push({
-                        id: id,
-                        gizmo: {
-                            id: id,
-                            display: { name: displayName }
-                        }
-                    });
-                    console.log(`[GPT-Exporter] Found project: ${id} (${displayName})`);
-                }
-            }
-        }
-
-        // Check for next page
-        if (response.cursor) {
-            cursor = response.cursor;
-        } else {
-            console.log(`[GPT-Exporter] No more pages, found ${projects.length} total projects`);
-            break;
-        }
+// Each message performs at most one backend request. Pagination and fallback
+// decisions live in the worker so they share its pacing and durable cooldown.
+async function getProjectsPage(message) {
+    if (message.source === 'dom') return { items: extractProjectsFromDOM() };
+    if (message.source === 'discovery') {
+        const response = await apiRequest('/gizmos/discovery', message.accountKey);
+        const items = response.cuts
+            ? response.cuts.flatMap(cut => cut.list?.items || []).map(item => ({ gizmo: item.resource?.gizmo || item.gizmo || item }))
+            : response.items || response.projects || response.list || [];
+        return { items: items.filter(item => (item.gizmo?.id || item.id || '').startsWith('g-p-')) };
     }
-
-    return projects;
-}
-
-/**
- * Get list of projects (GPT Projects use gizmo infrastructure)
- * Projects have IDs starting with "g-p-"
- * Uses the snorlax/sidebar endpoint which returns all projects with pagination
- */
-async function getProjectsList() {
-    // First try the snorlax/sidebar endpoint which returns all projects
-    try {
-        const allProjects = await fetchAllProjectsFromSidebar();
-        if (allProjects.length > 0) {
-            console.log(`[GPT-Exporter] Found ${allProjects.length} projects from snorlax/sidebar API`);
-            return { items: allProjects };
-        }
-    } catch (error) {
-        console.log(`[GPT-Exporter] snorlax/sidebar failed:`, error.message);
-    }
-
-    // Fallback to other endpoints
-    const endpoints = [
-        { url: '/gizmos/discovery', parse: 'cuts' },
-    ];
-
-    for (const endpoint of endpoints) {
-        try {
-            console.log(`[GPT-Exporter] Trying projects endpoint: ${endpoint.url}`);
-            const response = await apiRequest(endpoint.url);
-
-            console.log(`[GPT-Exporter] Response from ${endpoint.url}:`, JSON.stringify(response).substring(0, 800));
-
-            let items = [];
-
-            // Parse based on response structure
-            if (endpoint.parse === 'cuts' && response.cuts) {
-                for (const cut of response.cuts) {
-                    if (cut.list?.items) {
-                        for (const item of cut.list.items) {
-                            if (item.resource?.gizmo) {
-                                items.push({ gizmo: item.resource.gizmo });
-                            } else if (item.gizmo) {
-                                items.push(item);
-                            } else {
-                                items.push(item);
-                            }
-                        }
-                    }
-                }
-            } else {
-                items = response.items || response.projects || response.list || [];
-            }
-
-            if (!Array.isArray(items)) continue;
-
-            // Filter to only include projects (IDs starting with g-p-)
-            const projects = items.filter(item => {
-                const id = item.id || item.gizmo?.id || item.project_id || '';
-                return id.startsWith('g-p-');
-            });
-
-            console.log(`[GPT-Exporter] Found ${projects.length} projects (g-p- prefix) from ${endpoint.url}`);
-
-            if (projects.length > 0) {
-                return { items: projects };
-            }
-        } catch (error) {
-            console.log(`[GPT-Exporter] Endpoint ${endpoint.url} failed:`, error.message);
-        }
-    }
-
-    // FALLBACK: Extract project IDs from sidebar DOM
-    console.log('[GPT-Exporter] API endpoints failed, trying DOM extraction...');
-    try {
-        const projectsFromDOM = extractProjectsFromDOM();
-        if (projectsFromDOM.length > 0) {
-            console.log(`[GPT-Exporter] Found ${projectsFromDOM.length} projects from DOM`);
-            return { items: projectsFromDOM };
-        }
-    } catch (error) {
-        console.log('[GPT-Exporter] DOM extraction failed:', error.message);
-    }
-
-    console.log('[GPT-Exporter] No projects found from any source');
-    return { items: [] };
+    let endpoint = '/gizmos/snorlax/sidebar?conversations_per_gizmo=5&owned_only=true';
+    if (message.cursor) endpoint += `&cursor=${encodeURIComponent(message.cursor)}`;
+    const response = await apiRequest(endpoint, message.accountKey);
+    if (!Array.isArray(response.items)) throw new Error('Invalid project list response. Export paused.');
+    return {
+        items: (response.items || []).map(item => {
+            const gizmo = item.gizmo?.gizmo || item.gizmo || item;
+            return { id: gizmo.id, gizmo: { id: gizmo.id, display: { name: gizmo.display?.name || gizmo.name || gizmo.id } } };
+        }).filter(item => item.id?.startsWith('g-p-')),
+        cursor: response.cursor || null
+    };
 }
 
 /**
@@ -329,39 +215,6 @@ function extractProjectUUID(fullProjectId) {
 }
 
 /**
- * Get conversations within a specific project
- * Uses the /gizmos/{id}/conversations endpoint with cursor-based pagination
- */
-async function getProjectConversations(projectId, cursor = '0') {
-    // Extract just the UUID part for the API call
-    const apiProjectId = extractProjectUUID(projectId);
-    const endpoint = `/gizmos/${apiProjectId}/conversations?cursor=${cursor}`;
-
-    try {
-        console.log(`[GPT-Exporter] Fetching project conversations: ${endpoint}`);
-        const response = await apiRequest(endpoint);
-
-        console.log(`[GPT-Exporter] Response:`, JSON.stringify(response).substring(0, 300));
-
-        // Response has 'items' array and 'cursor' for next page
-        if (response.items) {
-            console.log(`[GPT-Exporter] Found ${response.items.length} conversations, next cursor: ${response.cursor || 'none'}`);
-            return {
-                items: response.items,
-                cursor: response.cursor || null,
-                total: response.total || response.items.length
-            };
-        }
-
-        return { items: [], cursor: null, total: 0 };
-    } catch (error) {
-        console.log(`[GPT-Exporter] Failed to get project conversations:`, error.message);
-        return { items: [], cursor: null, total: 0 };
-    }
-}
-
-
-/**
  * Listen for messages from the extension
  */
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -371,32 +224,32 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         try {
             switch (message.action) {
                 case 'getConversationsList':
-                    return await getConversationsList(message.offset || 0, message.limit || 28);
+                    return await apiRequest(`/conversations?offset=${message.offset || 0}&limit=${message.limit || 28}`, message.accountKey);
 
                 case 'getConversation':
-                    return await getConversation(message.id);
+                    return await apiRequest(`/conversation/${encodeURIComponent(message.id)}`, message.accountKey);
 
                 case 'getProjectsList':
-                    return await getProjectsList();
+                    return await getProjectsPage(message);
 
                 case 'getProjectConversations':
-                    return await getProjectConversations(message.projectId, message.cursor || '0');
+                    return await apiRequest(`/gizmos/${extractProjectUUID(message.projectId)}/conversations?cursor=${encodeURIComponent(message.cursor || '0')}`, message.accountKey);
+
+                case 'getAccountContext':
+                    await getAccessToken(true);
+                    return { accountKey: `${cachedUserId}:${getWorkspaceAccountId() || 'personal'}` };
 
                 case 'ping':
-                    // Also verify we can get a token
-                    try {
-                        await getAccessToken();
-                        return { success: true, url: window.location.href, hasToken: true };
-                    } catch (e) {
-                        return { success: true, url: window.location.href, hasToken: false, tokenError: e.message };
-                    }
+                    // Checking the popup must never issue requests during cooldown.
+                    return { success: true, url: window.location.href };
 
                 default:
                     throw new Error(`Unknown action: ${message.action}`);
             }
         } catch (error) {
             console.error('[GPT-Exporter Content] Error:', error);
-            return { error: error.message };
+            return { error: error.message, status: error.status || null,
+                retryAfter: error.retryAfter || null, detail: error.detail || null };
         }
     };
 
@@ -405,3 +258,5 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 console.log('[GPT-Exporter Content] Content script loaded on:', window.location.href);
+
+})();

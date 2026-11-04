@@ -9,104 +9,45 @@ import { filterNeedingExport, markMultipleExported, getStats, clearHistory } fro
 import { parseChatGPTConversationUrl } from './lib/chatgpt-url.js';
 import { createDownloadManager } from './lib/downloads.js';
 
-const RATE_LIMIT_DELAY = 4000; // 4 seconds between requests (avoid rate limiting)
-const ZIP_THRESHOLD = 3; // Bundle into ZIP if more than this many files
-const MAX_RETRIES = 3; // Retry failed requests
-const RETRY_BACKOFF = 10000; // 10 seconds base backoff on retry
+import { createExportStore } from './lib/export-store.js';
+import { createExportRunner, recordJobEvent } from './lib/export-job.js';
 
-// Export state tracking - allows popup to query current progress
-let exportState = {
-    isRunning: false,
-    phase: null,
-    current: 0,
-    total: 0,
-    startTime: null,
-    cancelRequested: false
-};
+const ZIP_THRESHOLD = 3;
+const JOB_ALARM = 'gpt-exporter-resume';
+const jobStore = createExportStore();
+let activeRun = null;
+let controlBusy = false;
+let pausing = false;
+let exportState = { isRunning: false, phase: null, cancelRequested: false };
 
-/**
- * Service worker keepalive.
- *
- * MV3 suspends idle service workers after ~30s. Long exports spend most of
- * their time sleeping between API requests, which counts as idle. Calling
- * any extension API resets the idle timer, so while an export is running
- * we ping a cheap API every 20s to keep the worker alive.
- */
-let keepAliveIntervalId = null;
-
-function startKeepAlive() {
-    if (keepAliveIntervalId) {
-        return;
-    }
-    keepAliveIntervalId = setInterval(() => {
-        chrome.runtime.getPlatformInfo().catch(() => {});
-    }, 20000);
-    console.log('[BG] Keepalive started');
-}
-
-function stopKeepAlive() {
-    if (keepAliveIntervalId) {
-        clearInterval(keepAliveIntervalId);
-        keepAliveIntervalId = null;
-        console.log('[BG] Keepalive stopped');
-    }
-}
-
-/**
- * Update export state and broadcast to any open popups
- */
 function updateExportState(phase, current, total) {
-    exportState.phase = phase;
-    exportState.current = current;
-    exportState.total = total;
-
-    // Broadcast to popup
-    chrome.runtime.sendMessage({ type: 'progress', phase, current, total }).catch(() => {
-        // Popup not open, ignore
-    });
+    exportState = { ...exportState, phase, current, total };
+    chrome.runtime.sendMessage({ type: 'progress', ...exportState }).catch(() => {});
 }
 
-/**
- * Get current export state
- */
-function getExportState() {
-    return { ...exportState };
-}
-
-/**
- * Request cancellation of the current export
- */
-function cancelExport() {
-    if (!exportState.isRunning) {
-        return { success: false, error: 'No export is currently running' };
-    }
-    exportState.cancelRequested = true;
-    downloadManager.cancelPending();
-    console.log('[BG] Export cancellation requested');
-    return { success: true };
-}
-
-/**
- * Check if cancellation was requested and throw if so
- */
 function checkCancellation() {
-    if (exportState.cancelRequested) {
-        throw new Error('Export cancelled by user');
-    }
+    if (exportState.cancelRequested) throw new Error('Export paused by user. Progress is saved.');
 }
 
-/**
- * Sleep utility
- */
-function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+function stateFromJob(job) {
+    return job ? {
+        isRunning: ['running', 'waiting', 'cooldown'].includes(job.status),
+        phase: job.phase, status: job.status, current: job.fetched, total: job.total,
+        fetched: job.fetched, pending: Math.max(0, job.total - job.fetched), saved: job.saved,
+        failed: job.status === 'paused' && job.error ? 1 : 0,
+        error: job.error, resumeAt: job.resumeAt, cooldownUntil: job.rate.cooldownUntil,
+        retryLevel: job.rate.level, spacingMs: job.rate.spacingMs,
+        events: job.events || [],
+        canResume: job.status === 'paused', canDiscard: job.status !== 'complete'
+    } : { isRunning: false, phase: null };
 }
 
-/**
- * Get a random delay between min and max milliseconds
- */
-function randomDelay(minMs, maxMs) {
-    return Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
+function notifyJob(job) {
+    exportState = { ...stateFromJob(job), cancelRequested: exportState.cancelRequested };
+    chrome.runtime.sendMessage({ type: 'progress', ...exportState }).catch(() => {});
+    const badge = job.status === 'paused' ? '!' : job.status === 'cooldown' ? '429' : '';
+    chrome.action?.setBadgeText({ text: badge }).catch(() => {});
+    chrome.action?.setBadgeBackgroundColor({ color: job.status === 'paused' ? '#b91c1c' : '#b45309' }).catch(() => {});
 }
 
 /**
@@ -239,249 +180,6 @@ async function sendToContentScript(message) {
     }
 }
 
-/**
- * Wrapper to call content script with retry logic
- * Handles rate limiting and temporary failures during list fetching
- */
-async function sendWithRetry(message, description = 'API call') {
-    let lastError = null;
-
-    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-        try {
-            const response = await sendToContentScript(message);
-
-            if (response.error) {
-                lastError = response.error;
-                const backoffTime = RETRY_BACKOFF * (attempt + 1);
-                console.warn(`[BG] ⚠️ ${description} attempt ${attempt + 1}/${MAX_RETRIES} returned error: ${lastError}`);
-                console.log(`[BG] Waiting ${backoffTime / 1000}s before retry...`);
-                await sleep(backoffTime);
-                continue;
-            }
-
-            return response;
-        } catch (error) {
-            lastError = error.message || String(error);
-            const backoffTime = RETRY_BACKOFF * (attempt + 1);
-            console.warn(`[BG] ⚠️ ${description} attempt ${attempt + 1}/${MAX_RETRIES} threw exception: ${lastError}`);
-            console.log(`[BG] Waiting ${backoffTime / 1000}s before retry...`);
-            await sleep(backoffTime);
-        }
-    }
-
-    console.error(`[BG] ❌ ${description} failed after ${MAX_RETRIES} attempts. Last error: ${lastError}`);
-    return { error: lastError };
-}
-
-/**
- * Get conversation list via content script (with retry)
- */
-async function getConversationsList(offset = 0, limit = 28) {
-    return sendWithRetry(
-        { action: 'getConversationsList', offset, limit },
-        `getConversationsList(offset=${offset})`
-    );
-}
-
-/**
- * Get list of projects (with retry)
- */
-async function getProjectsList() {
-    return sendWithRetry(
-        { action: 'getProjectsList' },
-        'getProjectsList'
-    );
-}
-
-/**
- * Get conversations within a project (with retry)
- */
-async function getProjectConversations(projectId, cursor = '0') {
-    return sendWithRetry(
-        { action: 'getProjectConversations', projectId, cursor },
-        `getProjectConversations(${projectId})`
-    );
-}
-
-/**
- * Get all conversations from a specific project
- * Uses cursor-based pagination
- * @param {number} maxItems - Optional limit on number of items to fetch (0 = unlimited)
- */
-async function getAllProjectConversationsMeta(projectId, projectName, onProgress = null, maxItems = 0) {
-    console.log(`[BG] Fetching conversations for project: ${projectName}${maxItems > 0 ? ` (max ${maxItems})` : ''}`);
-    const conversations = [];
-    let cursor = '0';
-    let totalFetched = 0;
-
-    while (true) {
-        // Check for cancellation
-        checkCancellation();
-
-        const response = await getProjectConversations(projectId, cursor);
-
-        if (response.error) {
-            console.log(`[BG] Error fetching project conversations: ${response.error}`);
-            break;
-        }
-
-        if (!response.items || response.items.length === 0) {
-            console.log(`[BG] No more conversations for project "${projectName}"`);
-            break;
-        }
-
-        // Mark conversations with their project info
-        const itemsWithProject = response.items.map(item => ({
-            ...item,
-            _projectId: projectId,
-            _projectName: projectName
-        }));
-
-        conversations.push(...itemsWithProject);
-        totalFetched += response.items.length;
-
-        console.log(`[BG] Fetched ${totalFetched} conversations from project "${projectName}"`);
-
-        if (onProgress) {
-            onProgress(conversations.length, response.total || conversations.length);
-        }
-
-        // Check if we've reached the limit
-        if (maxItems > 0 && conversations.length >= maxItems) {
-            console.log(`[BG] Reached limit of ${maxItems} for project "${projectName}"`);
-            break;
-        }
-
-        // Check if there's a next page
-        if (!response.cursor) {
-            console.log(`[BG] No more pages for project "${projectName}"`);
-            break;
-        }
-
-        cursor = response.cursor;
-        await sleep(randomDelay(2000, 4000));
-    }
-
-    console.log(`[BG] Total: ${conversations.length} conversations from project "${projectName}"`);
-    return conversations;
-}
-
-
-/**
- * Get all conversation metadata (including from projects)
- * Projects are fetched FIRST because they tend to be more important
- * @param {function} onProgress - Progress callback
- * @param {number} fetchLimit - Optional limit on total items to fetch (0 = unlimited)
- */
-async function getAllConversationsMeta(onProgress = null, fetchLimit = 0) {
-    console.log(`[BG] getAllConversationsMeta starting...${fetchLimit > 0 ? ` (limit: ${fetchLimit})` : ''}`);
-    const allConversations = [];
-
-    // FIRST: Fetch projects and their conversations (higher priority)
-    console.log('[BG] Fetching projects first (higher priority)...');
-    const projectsResponse = await getProjectsList();
-
-    if (projectsResponse.items && projectsResponse.items.length > 0) {
-        console.log(`[BG] Found ${projectsResponse.items.length} projects`);
-
-        for (const project of projectsResponse.items) {
-            // Check for cancellation
-            checkCancellation();
-
-            // Check if we've reached the limit
-            if (fetchLimit > 0 && allConversations.length >= fetchLimit) {
-                console.log(`[BG] Reached fetch limit of ${fetchLimit}, stopping project fetch`);
-                break;
-            }
-
-            const projectId = project.gizmo?.id || project.id;
-            const projectName = project.gizmo?.display?.name || project.display?.name || projectId;
-
-            if (!projectId) continue;
-
-            // Random delay 2-4 seconds between project fetches
-            await sleep(randomDelay(2000, 4000));
-
-            // Calculate remaining items we can fetch
-            const remainingLimit = fetchLimit > 0 ? fetchLimit - allConversations.length : 0;
-
-            const projectConversations = await getAllProjectConversationsMeta(
-                projectId,
-                projectName,
-                (current, projectTotal) => {
-                    if (onProgress) {
-                        // Report progress as we fetch project conversations
-                        onProgress(allConversations.length + current, allConversations.length + current);
-                    }
-                },
-                remainingLimit
-            );
-
-            if (projectConversations.length > 0) {
-                allConversations.push(...projectConversations);
-                console.log(`[BG] Added ${projectConversations.length} conversations from project "${projectName}"`);
-            }
-        }
-    } else {
-        console.log('[BG] No projects found or projects API not available');
-    }
-
-    // Check if we've already reached the limit from projects
-    if (fetchLimit > 0 && allConversations.length >= fetchLimit) {
-        console.log(`[BG] Reached fetch limit of ${fetchLimit} from projects alone`);
-        console.log(`[BG] Total conversations (projects only): ${allConversations.length}`);
-        return allConversations;
-    }
-
-    // SECOND: Get main/regular conversations
-    console.log('[BG] Now fetching main/regular conversations...');
-    let offset = 0;
-    const pageSize = 28;
-
-    while (true) {
-        // Check for cancellation
-        checkCancellation();
-
-        const response = await getConversationsList(offset, pageSize);
-
-        if (response.error) {
-            throw new Error(response.error);
-        }
-
-        // Continue until API returns no more items (don't trust 'total' - it may be capped)
-        if (!response.items || response.items.length === 0) {
-            console.log(`[BG] No more main conversations at offset ${offset}`);
-            break;
-        }
-
-        allConversations.push(...response.items);
-        console.log(`[BG] Fetched ${response.items.length} main conversations (total so far: ${allConversations.length})`);
-
-        if (onProgress) {
-            onProgress(allConversations.length, allConversations.length);
-        }
-
-        // Check if we've reached the limit
-        if (fetchLimit > 0 && allConversations.length >= fetchLimit) {
-            console.log(`[BG] Reached fetch limit of ${fetchLimit}, stopping main conversation fetch`);
-            break;
-        }
-
-        offset += pageSize;
-        // Random delay 2-4 seconds between list pages
-        await sleep(randomDelay(2000, 4000));
-    }
-
-    console.log(`[BG] Total conversations (projects + main): ${allConversations.length}`);
-    return allConversations;
-}
-
-/**
- * Get single conversation via content script
- */
-async function getConversation(id) {
-    return sendToContentScript({ action: 'getConversation', id });
-}
 
 function extractProjectUUID(projectId) {
     if (!projectId || typeof projectId !== 'string') {
@@ -535,36 +233,6 @@ async function getCurrentConversationTarget() {
     throw new Error('No active ChatGPT conversation found. Open the chat you want to export, then try again.');
 }
 
-async function getProjectNameForCurrentConversation(tab, projectId) {
-    if (!projectId) {
-        return null;
-    }
-
-    try {
-        const response = await sendToTab(tab, { action: 'getProjectsList' });
-        if (response?.error) {
-            return null;
-        }
-
-        const apiProjectId = extractProjectUUID(projectId);
-
-        for (const project of response.items || []) {
-            const candidateId = project.gizmo?.id || project.id;
-            if (!candidateId) {
-                continue;
-            }
-
-            if (candidateId === projectId || extractProjectUUID(candidateId) === apiProjectId) {
-                return project.gizmo?.display?.name || project.display?.name || null;
-            }
-        }
-    } catch (error) {
-        console.warn('[BG] Project name lookup failed for current conversation:', error.message);
-    }
-
-    return null;
-}
-
 async function buildExportFiles(fullConversations, formats, reportProgress) {
     const filesToBundle = [];
 
@@ -585,16 +253,15 @@ async function buildExportFiles(fullConversations, formats, reportProgress) {
     return filesToBundle;
 }
 
-async function downloadExportFiles(filesToBundle, folder = '') {
+async function downloadExportFiles(filesToBundle, folder = '', suffix = '') {
     const results = [];
 
     if (filesToBundle.length > ZIP_THRESHOLD) {
         updateExportState('zipping', 0, filesToBundle.length);
         const today = new Date().toISOString().split('T')[0];
-        const zipFilename = `ChatGPT_Export_${today}.zip`;
+        const zipFilename = `ChatGPT_Export_${today}${suffix}.zip`;
         await createZipBundle(filesToBundle, zipFilename, folder);
         results.push({ type: 'zip', filename: zipFilename, fileCount: filesToBundle.length });
-        updateExportState('complete', filesToBundle.length, filesToBundle.length);
         return results;
     }
 
@@ -603,7 +270,6 @@ async function downloadExportFiles(filesToBundle, folder = '') {
         results.push({ type: file.mimeType.includes('markdown') ? 'markdown' : 'json', filename: file.filename });
     }
 
-    updateExportState('complete', filesToBundle.length, filesToBundle.length);
     return results;
 }
 
@@ -620,112 +286,6 @@ async function markConversationsAsExported(fullConversations) {
     await markMultipleExported(exportedData);
 }
 
-/**
- * Get multiple conversations with rate limiting, retry logic, and batch pauses
- */
-async function getConversations(conversationIds, onProgress = null) {
-    const conversations = [];
-    let consecutiveErrors = 0;
-    const totalCount = conversationIds.length;
-    const startTime = Date.now();
-
-    console.log(`[BG] Starting to fetch ${totalCount} conversations...`);
-
-    for (let i = 0; i < conversationIds.length; i++) {
-        // Check for cancellation
-        checkCancellation();
-
-        const conversationNum = i + 1;
-        let conversation = null;
-        let lastError = null;
-
-        // Every 100 conversations, take a longer break (2-4 minutes)
-        if (i > 0 && i % 100 === 0) {
-            const pauseMinutes = randomDelay(2 * 60 * 1000, 4 * 60 * 1000);
-            const pauseMinutesDisplay = (pauseMinutes / 60000).toFixed(1);
-            console.log(`[BG] === BATCH PAUSE === Completed ${i}/${totalCount} conversations. Taking a ${pauseMinutesDisplay} minute break to avoid rate limiting...`);
-            await sleep(pauseMinutes);
-            console.log(`[BG] === RESUMING === Continuing with conversation ${conversationNum}/${totalCount}...`);
-        }
-
-        // Retry logic with exponential backoff
-        for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-            try {
-                console.log(`[BG] Fetching conversation ${conversationNum}/${totalCount}: ${conversationIds[i]}${attempt > 0 ? ` (retry ${attempt})` : ''}`);
-                conversation = await getConversation(conversationIds[i]);
-
-                if (conversation.error) {
-                    lastError = conversation.error;
-                    conversation = null;
-
-                    // Wait with backoff before retry
-                    const backoffTime = RETRY_BACKOFF * (attempt + 1);
-                    console.warn(`[BG] ⚠️ Attempt ${attempt + 1}/${MAX_RETRIES} failed for conversation ${conversationIds[i]}: ${lastError}`);
-                    console.log(`[BG] Waiting ${backoffTime / 1000}s before retry...`);
-                    await sleep(backoffTime);
-                    continue;
-                }
-
-                // Success - reset consecutive error counter
-                consecutiveErrors = 0;
-                break;
-            } catch (error) {
-                lastError = error.message || String(error);
-                const backoffTime = RETRY_BACKOFF * (attempt + 1);
-                console.warn(`[BG] ⚠️ Attempt ${attempt + 1}/${MAX_RETRIES} threw exception: ${lastError}`);
-                console.log(`[BG] Waiting ${backoffTime / 1000}s before retry...`);
-                await sleep(backoffTime);
-            }
-        }
-
-        if (!conversation) {
-            console.error(`[BG] ❌ FAILED to fetch conversation ${conversationIds[i]} after ${MAX_RETRIES} attempts. Last error: ${lastError}`);
-            consecutiveErrors++;
-
-            // If we get 5 consecutive errors, something is seriously wrong - abort
-            if (consecutiveErrors >= 5) {
-                const elapsed = ((Date.now() - startTime) / 60000).toFixed(1);
-                console.error(`[BG] ❌ ABORTING: ${consecutiveErrors} consecutive failures. Fetched ${conversations.length}/${totalCount} in ${elapsed} minutes.`);
-                throw new Error(`Export aborted after ${consecutiveErrors} consecutive failures. Fetched ${conversations.length} conversations. Try again later.`);
-            }
-            continue;
-        }
-
-        conversations.push(conversation);
-
-        if (onProgress) {
-            onProgress(conversationNum, totalCount);
-        }
-
-        // Random delay between 2-4 seconds before next request
-        if (i < conversationIds.length - 1) {
-            const delay = randomDelay(2000, 4000);
-            await sleep(delay);
-        }
-
-        // Log progress every 25 conversations
-        if (conversationNum % 25 === 0) {
-            const elapsed = ((Date.now() - startTime) / 60000).toFixed(1);
-            const rate = (conversationNum / (Date.now() - startTime) * 60000).toFixed(1);
-            console.log(`[BG] 📊 Progress: ${conversationNum}/${totalCount} (${elapsed} min elapsed, ~${rate} convos/min)`);
-        }
-    }
-
-    const totalElapsed = ((Date.now() - startTime) / 60000).toFixed(1);
-    console.log(`[BG] ✅ Completed fetching ${conversations.length}/${totalCount} conversations in ${totalElapsed} minutes`);
-
-    return conversations;
-}
-
-/**
- * Offscreen document helpers.
- *
- * Chrome's download system rejects data: URLs larger than ~2MB - the download
- * fails with NETWORK_FAILED ("Check internet connection" in the UI). MV3
- * service workers can't call URL.createObjectURL, so we delegate Blob URL
- * creation to an offscreen document. This makes downloads work regardless
- * of file size (fixes long conversations failing in "Export Current Chat").
- */
 const OFFSCREEN_DOCUMENT_PATH = 'offscreen.html';
 let offscreenCreating = null;
 
@@ -782,7 +342,32 @@ const downloadManager = createDownloadManager({
  */
 async function downloadBlobUrl(blobUrl, fullPath) {
     updateExportState('saving', 0, 1);
-    return downloadManager.download(blobUrl, fullPath);
+    let receipt;
+    let existingId;
+    let delegated = false;
+    try {
+        const job = await jobStore.getJob(false);
+        const key = `download:${job.saved}:${fullPath}`;
+        receipt = await jobStore.get(job, key);
+        if (receipt) {
+            const items = await chrome.downloads.search({ id: receipt.id });
+            const previous = items.find(item => item.id === receipt.id);
+            if (previous?.state === 'complete') return receipt.id;
+            if (previous?.state === 'in_progress') existingId = receipt.id;
+        }
+        const startedAt = existingId ? receipt.startedAt : Date.now();
+        delegated = true;
+        return await downloadManager.download(blobUrl, fullPath, {
+            existingId,
+            waitTimeoutMs: Math.max(1, 600_000 - (Date.now() - startedAt)),
+            onStarted: id => jobStore.put(job, key, { id, url: blobUrl, startedAt })
+        });
+    } finally {
+        // Includes receipts completed while their original worker was absent.
+        for (const url of new Set([!delegated && blobUrl, receipt?.url !== blobUrl && receipt?.url].filter(Boolean))) {
+            chrome.runtime.sendMessage({ target: 'offscreen', action: 'revoke-blob-url', url }).catch(() => {});
+        }
+    }
 }
 
 /**
@@ -852,318 +437,216 @@ async function createZipBundle(files, zipFilename, folder = '') {
     }
 }
 
-/**
- * Check connection by pinging content script
- */
-async function checkConnection() {
-    try {
-        console.log('[BG] checkConnection starting...');
-        const response = await sendToContentScript({ action: 'ping' });
-        console.log('[BG] checkConnection response:', response);
-        const connected = response && response.success;
-        console.log('[BG] checkConnection result:', connected);
-        return connected;
-    } catch (e) {
-        console.log('[BG] Connection check failed:', e.message);
-        return false;
-    }
+async function projects(request) {
+    const items = [];
+    const seen = new Set();
+    let cursor = null;
+    do {
+        const response = await request({ action: 'getProjectsList', cursor }, true, [404]);
+        if (response.status === 404) {
+            const fallback = await request({ action: 'getProjectsList', source: 'discovery' }, true, [404]);
+            if (!fallback.error) items.push(...(fallback.items || []));
+            break;
+        }
+        items.push(...(response.items || []));
+        cursor = response.cursor;
+        if (cursor && seen.has(cursor)) throw new Error('Project pagination repeated a cursor. Export paused.');
+        seen.add(cursor);
+    } while (cursor);
+    if (!items.length) items.push(...(await request({ action: 'getProjectsList', source: 'dom' })).items || []);
+    return items;
 }
 
-/**
- * Export all conversations
- */
-async function exportAll(formats, onProgress, folder = '', limit = 0) {
-    // Clear cached tab at start of new export to get a fresh, valid tab
-    clearCachedTab();
-
-    // Track export state
-    exportState.isRunning = true;
-    exportState.cancelRequested = false;
-    exportState.startTime = Date.now();
-    startKeepAlive();
-
-    const reportProgress = (phase, current, total) => {
-        updateExportState(phase, current, total);
-        onProgress({ phase, current, total });
-    };
-
-    try {
-        reportProgress('fetching_list', 0, 0);
-
-        // Pass limit to avoid fetching more metadata than needed
-        const allMeta = await getAllConversationsMeta((current, total) => {
-            reportProgress('fetching_list', current, total);
-        }, limit);
-
-        let toExport = allMeta;
-        if (limit > 0 && limit < allMeta.length) {
-            toExport = allMeta.slice(0, limit);
+async function discover(job, request) {
+    if (job.kind === 'current') {
+        const meta = { id: job.target.conversationId };
+        if (job.target.projectId) {
+            const project = (await projects(request)).find(p => extractProjectUUID(p.gizmo?.id || p.id) === extractProjectUUID(job.target.projectId));
+            meta._projectId = job.target.projectId;
+            meta._projectName = project?.gizmo?.display?.name || project?.display?.name || job.target.projectId;
         }
-
-        reportProgress('fetching_conversations', 0, toExport.length);
-
-        // Build lookup map for project metadata before fetching full conversations
-        const projectLookup = new Map();
-        for (const meta of toExport) {
-            if (meta._projectId) {
-                projectLookup.set(meta.id, {
-                    _projectId: meta._projectId,
-                    _projectName: meta._projectName
-                });
-            }
-        }
-
-        const conversationIds = toExport.map(c => c.id);
-        const fullConversations = await getConversations(conversationIds, (current, total) => {
-            reportProgress('fetching_conversations', current, total);
-        });
-
-        // Merge project metadata into full conversations
-        for (const conv of fullConversations) {
-            const projectInfo = projectLookup.get(conv.conversation_id || conv.id);
-            if (projectInfo) {
-                conv._projectId = projectInfo._projectId;
-                conv._projectName = projectInfo._projectName;
-            }
-        }
-
-        reportProgress('exporting', 0, fullConversations.length);
-
-        const filesToBundle = await buildExportFiles(fullConversations, formats, reportProgress);
-        const results = await downloadExportFiles(filesToBundle, folder);
-
-        await markConversationsAsExported(fullConversations);
-
-        return {
-            totalExported: fullConversations.length,
-            results
-        };
-    } finally {
-        exportState.isRunning = false;
-        exportState.phase = null;
-        stopKeepAlive();
+        return [meta];
     }
+    // Cache each metadata page so interrupted discovery resumes without repeating
+    // successful requests. Keep project metadata when main listings repeat IDs.
+    const all = new Map();
+    let fetchLimit = job.limit || 0;
+    if (job.kind === 'new' && fetchLimit && (await getStats()).totalExported > 0) {
+        fetchLimit = Math.max(fetchLimit * 3, fetchLimit + 100);
+    }
+    for (const project of await projects(request)) {
+        const projectId = project.gizmo?.id || project.id;
+        const projectName = project.gizmo?.display?.name || project.display?.name || projectId;
+        if (!projectId) continue;
+        let cursor = '0';
+        const seen = new Set();
+        do {
+            const response = await request({ action: 'getProjectConversations', projectId, cursor });
+            if (!Array.isArray(response.items)) throw new Error('Invalid project conversation list. Export paused.');
+            for (const item of response.items || []) all.set(item.id, { ...item, _projectId: projectId, _projectName: projectName });
+            cursor = response.cursor;
+            if (cursor && seen.has(cursor)) throw new Error('Conversation pagination repeated a cursor. Export paused.');
+            seen.add(cursor);
+        } while (cursor && (!fetchLimit || all.size < fetchLimit));
+        if (fetchLimit && all.size >= fetchLimit) break;
+    }
+    if (!fetchLimit || all.size < fetchLimit) {
+        for (let offset = 0; ; offset += 28) {
+            const response = await request({ action: 'getConversationsList', offset, limit: 28 });
+            if (!Array.isArray(response.items)) throw new Error('Invalid conversation list. Export paused.');
+            if (!response.items.length) break;
+            for (const item of response.items) if (!all.has(item.id)) all.set(item.id, item);
+            if (fetchLimit && all.size >= fetchLimit) break;
+        }
+    }
+    const meta = [...all.values()];
+    return job.kind === 'new' ? filterNeedingExport(meta) : meta;
 }
 
-/**
- * Export only new or updated conversations
- */
-async function exportNewUpdated(formats, onProgress, folder = '', limit = 0) {
-    // Clear cached tab at start of new export to get a fresh, valid tab
-    clearCachedTab();
-
-    // Track export state
-    exportState.isRunning = true;
-    exportState.cancelRequested = false;
-    exportState.startTime = Date.now();
-    startKeepAlive();
-
-    const reportProgress = (phase, current, total) => {
-        updateExportState(phase, current, total);
-        onProgress({ phase, current, total });
-    };
-
-    try {
-        reportProgress('fetching_list', 0, 0);
-
-        // Determine fetch limit based on export history
-        // If user has never exported, all conversations need export - no buffer needed
-        // If user has history, some will be filtered out - use buffer
-        let fetchLimit = 0;
-        if (limit > 0) {
-            const stats = await getStats();
-            if (stats.totalExported === 0) {
-                // First time export - no filtering will occur, use limit directly
-                fetchLimit = limit;
-            } else {
-                // Has history - some will be filtered, use 3x buffer
-                fetchLimit = Math.max(limit * 3, limit + 100);
-            }
-        }
-
-        const allMeta = await getAllConversationsMeta((current, total) => {
-            reportProgress('fetching_list', current, total);
-        }, fetchLimit);
-
-        let needExport = await filterNeedingExport(allMeta);
-
-        if (needExport.length === 0) {
-            return {
-                totalExported: 0,
-                message: 'All conversations are already up to date!',
-                results: []
-            };
-        }
-
-        if (limit > 0 && limit < needExport.length) {
-            needExport = needExport.slice(0, limit);
-        }
-
-        reportProgress('fetching_conversations', 0, needExport.length);
-
-        // Build lookup map for project metadata before fetching full conversations
-        const projectLookup = new Map();
-        for (const meta of needExport) {
-            if (meta._projectId) {
-                projectLookup.set(meta.id, {
-                    _projectId: meta._projectId,
-                    _projectName: meta._projectName
-                });
-            }
-        }
-
-        const conversationIds = needExport.map(c => c.id);
-        const fullConversations = await getConversations(conversationIds, (current, total) => {
-            reportProgress('fetching_conversations', current, total);
-        });
-
-        // Merge project metadata into full conversations
-        for (const conv of fullConversations) {
-            const projectInfo = projectLookup.get(conv.conversation_id || conv.id);
-            if (projectInfo) {
-                conv._projectId = projectInfo._projectId;
-                conv._projectName = projectInfo._projectName;
-            }
-        }
-
-        reportProgress('exporting', 0, fullConversations.length);
-
-        const filesToBundle = await buildExportFiles(fullConversations, formats, reportProgress);
-        const results = await downloadExportFiles(filesToBundle, folder);
-
-        await markConversationsAsExported(fullConversations);
-
-        return {
-            totalExported: fullConversations.length,
-            results
-        };
-    } finally {
-        exportState.isRunning = false;
-        exportState.phase = null;
-        stopKeepAlive();
+const runner = createExportRunner({
+    store: jobStore,
+    send: sendToContentScript,
+    discover,
+    checkCancelled: checkCancellation,
+    schedule: when => chrome.alarms.create(JOB_ALARM, { when }),
+    notify: notifyJob,
+    async finishBatch(batch, job) {
+        const files = await buildExportFiles(batch, job.formats, updateExportState);
+        const suffix = job.total > 100 ? `_${job.id.slice(0, 8)}_part-${Math.floor(job.saved / 100) + 1}` : '';
+        const results = await downloadExportFiles(files, job.folder, suffix);
+        checkCancellation();
+        await markConversationsAsExported(batch);
+        return results;
     }
-}
-
-/**
- * Export only the currently active conversation tab
- */
-async function exportCurrentConversation(formats, onProgress, folder = '') {
-    clearCachedTab();
-
-    exportState.isRunning = true;
-    exportState.cancelRequested = false;
-    exportState.startTime = Date.now();
-    startKeepAlive();
-
-    const reportProgress = (phase, current, total) => {
-        updateExportState(phase, current, total);
-        onProgress({ phase, current, total });
-    };
-
-    try {
-        reportProgress('fetching_conversations', 0, 1);
-
-        const target = await getCurrentConversationTarget();
-        const conversation = await sendToTab(target.tab, {
-            action: 'getConversation',
-            id: target.conversationId
-        });
-
-        if (conversation.error) {
-            throw new Error(conversation.error);
-        }
-
-        if (target.projectId) {
-            conversation._projectId = target.projectId;
-            conversation._projectName = await getProjectNameForCurrentConversation(target.tab, target.projectId);
-        }
-
-        reportProgress('fetching_conversations', 1, 1);
-        reportProgress('exporting', 0, 1);
-
-        const fullConversations = [conversation];
-        const filesToBundle = await buildExportFiles(fullConversations, formats, reportProgress);
-        const results = await downloadExportFiles(filesToBundle, folder);
-
-        await markConversationsAsExported(fullConversations);
-
-        return {
-            totalExported: 1,
-            results
-        };
-    } finally {
-        exportState.isRunning = false;
-        exportState.phase = null;
-        stopKeepAlive();
-    }
-}
-
-/**
- * Handle messages from popup
- */
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    const handleAsync = async () => {
-        try {
-            switch (message.action) {
-                case 'checkConnection':
-                    return { connected: await checkConnection() };
-
-                case 'getStats':
-                    return await getStats();
-
-                case 'getExportState':
-                    return getExportState();
-
-                case 'getCurrentConversationTarget': {
-                    const target = await getCurrentConversationTarget();
-                    return {
-                        available: true,
-                        conversationId: target.conversationId,
-                        projectId: target.projectId
-                    };
-                }
-
-                case 'exportAll':
-                    return await exportAll(
-                        message.formats,
-                        (progress) => chrome.runtime.sendMessage({ type: 'progress', ...progress }),
-                        message.downloadFolder || '',
-                        message.limit || 0
-                    );
-
-                case 'exportNewUpdated':
-                    return await exportNewUpdated(
-                        message.formats,
-                        (progress) => chrome.runtime.sendMessage({ type: 'progress', ...progress }),
-                        message.downloadFolder || '',
-                        message.limit || 0
-                    );
-
-                case 'exportCurrentConversation':
-                    return await exportCurrentConversation(
-                        message.formats,
-                        (progress) => chrome.runtime.sendMessage({ type: 'progress', ...progress }),
-                        message.downloadFolder || ''
-                    );
-
-                case 'clearHistory':
-                    await clearHistory();
-                    return { success: true };
-
-                case 'cancelExport':
-                    return cancelExport();
-
-                default:
-                    throw new Error(`Unknown action: ${message.action}`);
-            }
-        } catch (error) {
-            console.error('[BG] Error:', error);
-            return { error: error.message };
-        }
-    };
-
-    handleAsync().then(sendResponse);
-    return true;
 });
 
-console.log('GPT Exporter background service worker loaded');
+async function execute(job) {
+    if (activeRun) throw new Error('An export is already running');
+    exportState.cancelRequested = false;
+    // A watchdog survives an unexpected termination in the middle of a fetch or
+    // download. The next normal checkpoint replaces it with the precise alarm.
+    // Only bounded work runs in an event. Cooldowns and long jobs continue via alarms.
+    activeRun = (async () => {
+        await chrome.alarms.create(JOB_ALARM, { when: Date.now() + 120_000 });
+        return runner.run(job);
+    })();
+    try {
+        const { job: checkpoint, ...result } = await activeRun;
+        if (!checkpoint || checkpoint.status === 'paused') await chrome.alarms.clear(JOB_ALARM);
+        return result;
+    }
+    finally { activeRun = null; }
+}
+
+async function startExport(kind, message) {
+    if (!message.formats || (!message.formats.markdown && !message.formats.json)) throw new Error('Select at least one export format.');
+    if (controlBusy || activeRun || pausing) throw new Error('An export is already running');
+    controlBusy = true;
+    try {
+        clearCachedTab();
+        const target = kind === 'current' ? await getCurrentConversationTarget() : null;
+        if (target) cachedExportTab = target.tab;
+        const job = await runner.create({ kind, formats: message.formats, folder: message.downloadFolder || '',
+            limit: Math.max(0, Number(message.limit) || 0), target });
+        return await execute(job);
+    } finally { controlBusy = false; }
+}
+
+async function resumeExport() {
+    if (controlBusy || activeRun || pausing) throw new Error('An export is already running');
+    controlBusy = true;
+    try {
+        const job = await jobStore.getJob();
+        if (!job || job.status === 'complete') throw new Error('No unfinished export to resume');
+        job.rate.consecutive429 = 0;
+        job.transient = null;
+        return await execute(job);
+    } finally { controlBusy = false; }
+}
+
+async function cancelExport() {
+    if (pausing) throw new Error('The export is already being paused.');
+    if (controlBusy && !activeRun) throw new Error('The export is starting. Try Pause again shortly.');
+    pausing = true;
+    try {
+        exportState.cancelRequested = true;
+        downloadManager.cancelPending();
+        await chrome.alarms.clear(JOB_ALARM);
+        if (activeRun) await activeRun;
+        const job = await jobStore.getJob();
+        if (!job || job.status === 'complete') return { success: false, error: 'No unfinished export' };
+        job.status = job.phase = 'paused';
+        job.error = 'Export paused by user. Progress is saved.';
+        recordJobEvent(job, job.error);
+        await jobStore.save(job);
+        await chrome.alarms.clear(JOB_ALARM);
+        notifyJob(job);
+        return { success: true };
+    } finally { pausing = false; }
+}
+
+// Register listeners synchronously so Chrome can wake a suspended worker.
+chrome.alarms.onAlarm.addListener(alarm => {
+    if (alarm.name !== JOB_ALARM) return;
+    return ready.then(async () => {
+        if (controlBusy || activeRun || pausing) {
+            await chrome.alarms.create(JOB_ALARM, { when: Date.now() + 120_000 });
+            return;
+        }
+        const job = await jobStore.getJob();
+        if (job && ['running', 'cooldown', 'waiting'].includes(job.status)) await execute(job);
+    }).catch(console.error);
+});
+
+const ready = (async () => {
+    const job = await jobStore.getJob(false);
+    if (!job) return;
+    notifyJob(job);
+    // Recreate alarms after worker termination, extension update or browser restart.
+    if (['running', 'cooldown', 'waiting'].includes(job.status)) {
+        await chrome.alarms.create(JOB_ALARM, { when: Math.max(Date.now() + 1000, job.resumeAt || 0, job.rate.cooldownUntil) });
+    }
+})();
+
+chrome.runtime.onStartup?.addListener(() => { ready.catch(console.error); });
+chrome.runtime.onInstalled?.addListener(() => { ready.catch(console.error); });
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.target === 'offscreen') return;
+    // Content scripts cannot start, discard or otherwise control export jobs.
+    if (sender.tab) return;
+    (async () => {
+        await ready;
+        switch (message.action) {
+            case 'checkConnection': {
+                const response = await sendToContentScript({ action: 'ping' });
+                return { connected: !!response?.success };
+            }
+            case 'getStats': return getStats();
+            case 'getExportState': return { ...stateFromJob(await jobStore.getJob(false)), ...(activeRun ? exportState : {}) };
+            case 'getCurrentConversationTarget': {
+                const target = await getCurrentConversationTarget();
+                return { available: true, conversationId: target.conversationId, projectId: target.projectId };
+            }
+            case 'exportAll': return startExport('all', message);
+            case 'exportNewUpdated': return startExport('new', message);
+            case 'exportCurrentConversation': return startExport('current', message);
+            case 'resumeExport': return resumeExport();
+            case 'cancelExport': return cancelExport();
+            case 'discardExport':
+                if (activeRun || controlBusy || pausing) throw new Error('Pause the export before discarding it.');
+                controlBusy = true;
+                try {
+                    await chrome.alarms.clear(JOB_ALARM);
+                    await jobStore.clear();
+                    exportState = { isRunning: false, phase: null, cancelRequested: false };
+                    chrome.action?.setBadgeText({ text: '' }).catch(() => {});
+                    chrome.runtime.sendMessage({ type: 'progress', ...exportState }).catch(() => {});
+                    return { success: true };
+                } finally { controlBusy = false; }
+            case 'clearHistory': return clearHistory();
+            default: throw new Error(`Unknown action: ${message.action}`);
+        }
+    })().then(sendResponse, error => sendResponse({ error: error.message }));
+    return true;
+});

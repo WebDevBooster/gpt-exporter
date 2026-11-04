@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { IDBFactory } from 'fake-indexeddb';
 import { test, afterEach } from 'node:test';
 import { setTimeout as delay, setImmediate as tick } from 'node:timers/promises';
 
@@ -7,7 +8,7 @@ function event() {
     return {
         addListener: fn => listeners.add(fn),
         removeListener: fn => listeners.delete(fn),
-        emit: value => { for (const fn of listeners) fn(value); }
+        emit: value => Promise.all([...listeners].map(fn => fn(value)))
     };
 }
 
@@ -26,6 +27,14 @@ afterEach(async () => {
     fixtures.clear();
 });
 async function fixture({ count = 1, startError, earlyState } = {}) {
+    globalThis.indexedDB = new IDBFactory();
+    const originalTimeout = globalThis.setTimeout;
+    const originalNow = Date.now;
+    let virtualTime = originalNow();
+    Date.now = () => virtualTime;
+    globalThis.setTimeout = (callback, ms, ...args) => ms <= 20000
+        ? originalTimeout(() => { virtualTime += ms; callback(...args); }, 0)
+        : originalTimeout(callback, ms, ...args);
     const conversations = Array.from({ length: count }, (_, i) => ({
         id: `1234567${i}-1234-5678-9abc-def012345678`,
         conversation_id: `1234567${i}-1234-5678-9abc-def012345678`,
@@ -37,8 +46,13 @@ async function fixture({ count = 1, startError, earlyState } = {}) {
     const revoked = [];
     const generated = [];
     const onChanged = event();
+    const onAlarm = event();
+    const alarms = new Map(), badges = [], requests = [];
+    let responder;
     let handler;
     globalThis.chrome = {
+        alarms: { onAlarm, async create(name, info) { alarms.set(name, info); }, async clear(name) { alarms.delete(name); } },
+        action: { async setBadgeText({ text }) { badges.push(text); }, async setBadgeBackgroundColor() {} },
         storage: { local: {
             async get(key) { return { [key]: storage[key] }; },
             async set(values) { Object.assign(storage, structuredClone(values)); }
@@ -60,6 +74,10 @@ async function fixture({ count = 1, startError, earlyState } = {}) {
             async query() { return [{ id: 1, active: true, url: `https://chatgpt.com/c/${conversations[0].id}` }]; },
             async get() { return { id: 1, url: `https://chatgpt.com/c/${conversations[0].id}` }; },
             async sendMessage(id, msg) {
+                requests.push(msg);
+                const intercepted = responder?.(msg);
+                if (intercepted) return intercepted;
+                if (msg.action === 'getAccountContext') return { accountKey: 'fixture:personal' };
                 if (msg.action === 'getProjectsList') return { items: [] };
                 if (msg.action === 'getConversationsList') return { items: msg.offset === 0 ? conversations : [] };
                 if (msg.action === 'getConversation') return structuredClone(conversations.find(c => c.id === msg.id));
@@ -92,17 +110,27 @@ async function fixture({ count = 1, startError, earlyState } = {}) {
     const exports = [];
     function send(message) {
         const result = new Promise(resolve => handler(message, {}, resolve));
-        if (message.action.startsWith('export')) exports.push(result);
+        if (message.action.startsWith('export') || message.action === 'resumeExport') exports.push(result);
         return result;
     }
     const history = () => Object.keys(storage.gpt_exporter_sync_data?.exportedConversations || {});
-    const f = { send, downloads, generated, revoked, history, finish, conversations,
+    const f = { send, downloads, generated, revoked, history, finish, conversations, alarms, badges, requests,
+        set responder(fn) { responder = fn; },
+        advanceTo(time) { virtualTime = time; },
+        alarm: () => onAlarm.emit({ name: 'gpt-exporter-resume' }),
+        async restart() {
+            // Drop listeners with the old worker; the IndexedDB factory survives.
+            await import(`../background.js?download-fixture=${++serial}`);
+            await send({ action: 'getExportState' });
+        },
         async cleanup() {
             await send({ action: 'cancelExport' });
             for (const item of downloads.filter(item => item.state === 'in_progress')) {
                 finish(item.id, 'interrupted', 'USER_CANCELED');
             }
             await Promise.all(exports);
+            globalThis.setTimeout = originalTimeout;
+            Date.now = originalNow;
         }
     };
     fixtures.add(f);
@@ -151,6 +179,7 @@ test('an interrupted export stays eligible for a successful incremental retry', 
     await until(() => f.downloads.length === 1);
     f.finish(1, 'interrupted', 'USER_CANCELED');
     assert.match((await first).error, /USER_CANCELED/);
+    await f.send({ action: 'discardExport' });
     const retry = f.send({ action: 'exportNewUpdated', formats: { markdown: true }, limit: 1 });
     await until(() => f.downloads.length === 2);
     assert.deepEqual(f.history(), []);
@@ -184,7 +213,7 @@ test('ZIP interruption and successful retry have the same history boundary', { t
     f.finish(1, 'interrupted', 'FILE_FAILED');
     assert.match((await failed).error, /FILE_FAILED/);
     assert.deepEqual(f.history(), []);
-    const retry = run();
+    const retry = f.send({ action: 'resumeExport' });
     await until(() => f.downloads.length === 2, 15000);
     f.finish(2, 'complete');
     assert.equal((await retry).totalExported, 4);
@@ -224,4 +253,66 @@ test('Cancel Export cancels the owned download and leaves history unchanged', { 
     assert.equal(f.downloads[0].state, 'interrupted');
     assert.deepEqual(f.history(), []);
     assert.deepEqual(f.revoked, ['blob:fixture-1']);
+});
+
+
+test('real background wiring restores a cooldown, recreates alarms and finishes from the saved job', async () => {
+    const f = await fixture({ earlyState: 'complete' });
+    f.responder = msg => msg.action === 'getConversation' ? { error: '429', status: 429, retryAfter: '120' } : null;
+    const result = await f.send({ action: 'exportAll', formats: { markdown: true }, limit: 1 });
+    assert.ok(result.deferred);
+    const state = await f.send({ action: 'getExportState' });
+    assert.equal(state.status, 'cooldown');
+    assert.equal(state.pending, 1);
+    assert.equal(f.badges.at(-1), '429');
+    const requests = f.requests.length;
+    await f.restart();
+    assert.equal(f.alarms.has('gpt-exporter-resume'), true);
+    await f.alarm();
+    assert.equal(f.requests.length, requests, 'An early alarm must not bypass the saved cooldown');
+    f.responder = null;
+    f.advanceTo(state.resumeAt);
+    await f.alarm();
+    assert.equal((await f.send({ action: 'getExportState' })).status, 'complete');
+    assert.equal(f.history().length, 1);
+    assert.equal(f.alarms.size, 0);
+    assert.equal(f.badges.at(-1), '');
+});
+
+test('overlapping exports are blocked and user pause keeps fetched payloads for resume', async () => {
+    const f = await fixture();
+    const first = f.send({ action: 'exportAll', formats: { markdown: true }, limit: 1 });
+    await until(() => f.downloads.length === 1);
+    assert.match((await f.send({ action: 'exportAll', formats: { markdown: true } })).error, /already running/);
+    assert.match((await f.send({ action: 'discardExport' })).error, /Pause/);
+    await f.send({ action: 'cancelExport' });
+    await first;
+    const state = await f.send({ action: 'getExportState' });
+    assert.equal(state.status, 'paused');
+    assert.equal(state.fetched, 1);
+    const fetchedCalls = f.requests.filter(r => r.action === 'getConversation').length;
+    const retry = f.send({ action: 'resumeExport' });
+    await until(() => f.downloads.length === 2);
+    f.finish(2, 'complete');
+    assert.equal((await retry).totalExported, 1);
+    assert.equal(f.requests.filter(r => r.action === 'getConversation').length, fetchedCalls);
+});
+
+test('resuming a partly saved batch reuses its completed file receipt instead of downloading it twice', async () => {
+    const f = await fixture();
+    const first = f.send({ action: 'exportCurrentConversation', formats: { markdown: true, json: true } });
+    await until(() => f.downloads.length === 1);
+    f.finish(1, 'complete');
+    await until(() => f.downloads.length === 2);
+    f.finish(2, 'interrupted', 'FILE_FAILED');
+    assert.match((await first).error, /FILE_FAILED/);
+    assert.deepEqual(f.history(), []);
+    await f.restart();
+    const retry = f.send({ action: 'resumeExport' });
+    await until(() => f.downloads.length === 3);
+    assert.match(f.downloads[2].options.filename, /\.json$/);
+    f.finish(3, 'complete');
+    assert.equal((await retry).totalExported, 1);
+    assert.equal(f.downloads.length, 3, 'The completed Markdown file must not be downloaded twice');
+    assert.equal(f.history().length, 1);
 });

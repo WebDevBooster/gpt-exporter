@@ -11,3 +11,6 @@ test-vault/
 .autocoder
 CLAUDE.md
 claude-progress.txt
+
+# Local dependencies (may point to the external SSD)
+/node_modules

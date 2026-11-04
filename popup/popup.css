@@ -393,3 +393,12 @@ footer {
 .log-entry.info {
     color: #3b82f6;
 }
+/* Persisted job status remains visible when the popup is reopened. */
+.hidden { display: none !important; }
+.log-entry.warning { color: #fbbf24; }
+.job-status { margin: 12px 0; padding: 12px; border: 2px solid #64748b; border-radius: 8px; background: #f1f5f9; color: #0f172a; font-size: 13px; }
+.job-status[data-status="cooldown"] { border-color: #b45309; background: #fffbeb; }
+.job-status[data-status="paused"] { border-color: #b91c1c; background: #fef2f2; }
+.job-status[data-status="complete"] { border-color: #15803d; background: #f0fdf4; }
+.job-status p { margin: 6px 0 0; overflow-wrap: anywhere; }
+.job-controls { display: flex; gap: 10px; align-items: center; margin-top: 8px; }

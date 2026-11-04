@@ -4,11 +4,12 @@
   "description": "Test suite for GPT Exporter Chrome extension markdown export",
   "type": "module",
   "scripts": {
-    "test": "node test/runner.mjs && npm run test:downloads",
+    "test": "node test/runner.mjs && npm run test:downloads && npm run test:recovery",
     "test:downloads": "node --test test/download-completion.test.mjs test/download-manager.test.mjs",
     "test:infra": "node test/runner.mjs --infra",
     "test:helpers": "node test/runner.mjs --helpers",
-    "test:integration": "node test/runner.mjs --integration"
+    "test:integration": "node test/runner.mjs --integration",
+    "test:recovery": "node --test test/export-recovery.test.mjs test/content-errors.test.mjs test/popup-status.test.mjs"
   },
   "keywords": [
     "chatgpt",
@@ -19,5 +20,8 @@
   "license": "MIT",
   "engines": {
     "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "fake-indexeddb": "^6.2.4"
   }
 }

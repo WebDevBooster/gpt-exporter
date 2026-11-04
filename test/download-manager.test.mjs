@@ -87,3 +87,24 @@ test('a cancelled job cannot start another output file', { timeout: 2000 }, asyn
     assert.equal(starts, 0);
     assert.deepEqual(f.revoked, ['blob:test']);
 });
+
+test('a replacement worker follows an existing download ID without starting a duplicate', async () => {
+    let starts = 0;
+    const f = fixture({ start: async () => { starts++; return 8; } });
+    const persisted = [];
+    const result = f.download('blob:replacement', 'test.md', { existingId: 7, onStarted: async id => persisted.push(id) });
+    await tick();
+    assert.equal(starts, 0);
+    assert.deepEqual(persisted, [7]);
+    f.emit({ id: 7, state: { current: 'complete' } });
+    assert.equal(await result, 7);
+});
+
+test('failure to persist a receipt cancels the download and cannot acknowledge output', async () => {
+    const f = fixture();
+    await assert.rejects(f.download('blob:test', 'test.md', {
+        onStarted: async () => { throw new Error('Checkpoint unavailable'); }
+    }), /Checkpoint unavailable/);
+    assert.deepEqual(f.cancelled, [7]);
+    assert.deepEqual(f.revoked, ['blob:test']);
+});

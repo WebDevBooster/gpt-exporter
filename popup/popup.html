@@ -21,6 +21,18 @@
             </div>
         </header>
 
+        <section id="jobStatus" class="job-status hidden" role="status" aria-live="polite">
+            <strong id="jobStatusTitle"></strong>
+            <p id="jobCounts"></p>
+            <p id="jobMessage"></p>
+            <p id="jobRetryTime"></p>
+            <div class="job-controls">
+                <button id="btnResume" class="btn btn-primary hidden">Resume Export</button>
+                <button id="btnDiscard" class="btn-link hidden">Discard Saved Job</button>
+            </div>
+        </section>
+
+
         <section class="stats">
             <div class="stat-item">
                 <span class="stat-value" id="exportedCount">—</span>
@@ -91,7 +103,7 @@
         </section>
 
         <footer>
-            <button id="btnCancelProcess" class="btn-link">Cancel Current Process</button>
+            <button id="btnCancelProcess" class="btn-link">Pause Export</button>
             <button id="btnClearHistory" class="btn-link">Clear Export History</button>
         </footer>
     </div>

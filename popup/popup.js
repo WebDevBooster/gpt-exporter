@@ -24,6 +24,66 @@ const progressFill = document.getElementById('progressFill');
 const progressText = document.getElementById('progressText');
 const logOutput = document.getElementById('logOutput');
 
+const jobStatus = document.getElementById('jobStatus');
+const jobStatusTitle = document.getElementById('jobStatusTitle');
+const jobCounts = document.getElementById('jobCounts');
+const jobMessage = document.getElementById('jobMessage');
+const jobRetryTime = document.getElementById('jobRetryTime');
+const btnResume = document.getElementById('btnResume');
+const btnDiscard = document.getElementById('btnDiscard');
+let lastJobState = null;
+let lastLogKey = '';
+const loggedEvents = new Set();
+
+function renderJobState(state) {
+    const previousStatus = lastJobState?.status;
+    lastJobState = state;
+    const unfinished = state.phase && state.status !== 'complete';
+    jobStatus.classList.toggle('hidden', !state.phase);
+    jobStatus.dataset.status = state.status || '';
+    for (const event of state.events || []) {
+        if (!loggedEvents.has(event.id)) {
+            log(event.message, event.type, event.at);
+            loggedEvents.add(event.id);
+        }
+    }
+    const titles = {
+        running: 'Export in progress', cooldown: 'ChatGPT rate limit: export cooling down',
+        waiting: 'Export waiting to continue', paused: 'Export paused: action required', complete: 'Export complete'
+    };
+    jobStatusTitle.textContent = titles[state.status] || 'Export in progress';
+    jobCounts.textContent = `${state.fetched || 0} fetched · ${state.pending || 0} pending · ${state.saved || 0} saved · ${state.failed || 0} blocking errors`;
+    jobMessage.textContent = state.error || (state.status === 'complete' ? 'All requested files finished saving.' : 'Successful fetches are saved automatically.');
+    const retryAt = state.status === 'cooldown' || state.status === 'waiting' ? state.resumeAt : state.cooldownUntil;
+    const seconds = Math.max(0, Math.ceil(((retryAt || 0) - Date.now()) / 1000));
+    jobRetryTime.textContent = retryAt && seconds > 0
+        ? `${state.status === 'paused' ? 'Resume no earlier than' : 'Continues at or after'} ${new Date(retryAt).toLocaleTimeString()} (${seconds}s remaining)`
+        : state.isRunning && state.status !== 'running' ? 'Waiting for Chrome to resume the job.' : '';
+    btnResume.classList.toggle('hidden', !state.canResume);
+    btnDiscard.classList.toggle('hidden', !state.canDiscard || state.isRunning);
+    btnCancelProcess.disabled = !state.isRunning;
+    if (unfinished) {
+        btnExportNew.disabled = btnExportAll.disabled = btnExportCurrent.disabled = true;
+    } else if (connectionStatus.classList.contains('connected')) {
+        btnExportNew.disabled = btnExportAll.disabled = false;
+        // The availability check additionally validates the focused chat tab.
+        if (state.status === 'complete' && previousStatus !== 'complete') {
+            updateStats();
+            updateCurrentConversationAvailability();
+        }
+    }
+    if (state.phase && !['paused', 'cooldown', 'waiting'].includes(state.phase)) {
+        showProgress(state.phase, state.current || 0, state.total || 0);
+    } else hideProgress();
+    const logKey = `${state.status}:${state.phase}:${state.error || ''}:${state.retryLevel || 0}:${Math.floor((state.fetched || 0) / 25)}`;
+    if (state.phase && logKey !== lastLogKey) {
+        const retry = state.resumeAt ? ` ${state.status === 'paused' ? 'Resume no earlier than' : 'Next attempt at or after'} ${new Date(state.resumeAt).toLocaleTimeString()}.` : '';
+        log(`${jobStatusTitle.textContent}. ${jobCounts.textContent}. ${state.error || ''}${retry}`,
+            state.status === 'paused' ? 'error' : state.status === 'cooldown' ? 'warning' : 'info');
+        lastLogKey = logKey;
+    }
+}
+
 /**
  * Check if running in a popup or a window
  */
@@ -51,10 +111,10 @@ const SETTINGS_KEY = 'gpt_exporter_settings';
 /**
  * Add entry to visible log
  */
-function log(message, type = 'info') {
+function log(message, type = 'info', at = Date.now()) {
     const entry = document.createElement('div');
     entry.className = `log-entry ${type}`;
-    const time = new Date().toLocaleTimeString();
+    const time = new Date(at).toLocaleTimeString();
     entry.textContent = `[${time}] ${message}`;
     logOutput.appendChild(entry);
     logOutput.scrollTop = logOutput.scrollHeight;
@@ -182,6 +242,10 @@ async function updateConnectionStatus() {
  * Enable current-chat export only when the active tab is a concrete conversation
  */
 async function updateCurrentConversationAvailability() {
+    if (lastJobState?.phase && lastJobState.status !== 'complete') {
+        btnExportCurrent.disabled = true;
+        return;
+    }
     if (!connectionStatus.classList.contains('connected')) {
         btnExportCurrent.disabled = true;
         btnExportCurrent.title = 'Log in to ChatGPT first';
@@ -240,11 +304,11 @@ function showProgress(phase, current, total) {
             break;
         case 'fetching_conversations':
             phaseText = `Downloading conversations... ${current}/${total}`;
-            percent = 25 + (current / total) * 45;
+            percent = 25 + (total ? current / total : 0) * 45;
             break;
         case 'exporting':
             phaseText = `Preparing files... ${current}/${total}`;
-            percent = 70 + (current / total) * 15;
+            percent = 70 + (total ? current / total : 0) * 15;
             break;
         case 'zipping':
             phaseText = `Creating ZIP archive... ${total} files`;
@@ -325,28 +389,15 @@ async function handleExport(exportType) {
             limit: options.limit
         });
 
-        log(`Result: ${JSON.stringify(result)}`, result?.error ? 'error' : 'info');
-
-        if (result?.error) {
-            throw new Error(result.error);
-        }
-
-        if (result?.totalExported === 0) {
-            showComplete(result.message || 'Nothing to export!');
-        } else if (result?.totalExported > 0) {
-            showComplete(`✓ Exported ${result.totalExported} conversation(s)`);
-        } else {
-            log('Unexpected result format', 'error');
+        if (result?.error) log(result.error, 'error');
+        if (result?.totalExported !== undefined) {
+            log(`Exported ${result.totalExported} conversation(s)`, 'success');
+            await updateStats();
         }
     } catch (error) {
-        console.error('Export error:', error);
         log(`Export failed: ${error.message}`, 'error');
-        hideProgress();
-        alert(`Export failed: ${error.message}`);
     } finally {
-        btnExportNew.disabled = false;
-        btnExportAll.disabled = false;
-        await updateCurrentConversationAvailability();
+        await checkExportState();
     }
 }
 
@@ -354,20 +405,31 @@ async function handleExport(exportType) {
  * Handle cancel current process
  */
 async function handleCancelProcess() {
-    if (!confirm('Cancel the current export process? Progress will be lost.')) {
-        return;
-    }
-
     const result = await sendMessage({ action: 'cancelExport' });
-    if (result && !result.error) {
-        log('Export cancelled', 'info');
-        hideProgress();
-        btnExportNew.disabled = false;
-        btnExportAll.disabled = false;
-        await updateCurrentConversationAvailability();
-    } else {
-        log(result?.error || 'No export running to cancel', 'info');
+    if (result?.error) log(result.error, 'error');
+    await checkExportState();
+}
+
+async function handleResume() {
+    btnResume.disabled = true;
+    try {
+        const result = await sendMessage({ action: 'resumeExport' });
+        if (result?.error) log(result.error, 'error');
+    } finally {
+        btnResume.disabled = false;
+        await checkExportState();
     }
+}
+
+async function handleDiscard() {
+    if (!confirm('Discard this unfinished job and its saved fetches? Downloaded files and export history are kept.')) return;
+    const result = await sendMessage({ action: 'discardExport' });
+    if (!result?.error) {
+        lastLogKey = '';
+        await updateConnectionStatus();
+        await updateCurrentConversationAvailability();
+    }
+    await checkExportState();
 }
 
 /**
@@ -383,13 +445,14 @@ async function handleClearHistory() {
     await updateStats();
 }
 
-// Listen for progress updates from background
-chrome.runtime.onMessage.addListener((message) => {
-    if (message.type === 'progress') {
-        showProgress(message.phase, message.current, message.total);
-        log(`Progress: ${message.phase} ${message.current}/${message.total}`);
-    }
+// Warnings and failures are surfaced here even when the initial export call
+// has already returned. The saved job is the source of truth after reopening.
+chrome.runtime.onMessage.addListener(message => {
+    if (message.type === 'progress') renderJobState(message);
 });
+
+btnResume.addEventListener('click', handleResume);
+btnDiscard.addEventListener('click', handleDiscard);
 
 // Auto-save settings on change
 downloadFolder.addEventListener('change', saveSettings);
@@ -411,18 +474,18 @@ if (btnPopout) {
  * Check if an export is currently running and show progress
  */
 async function checkExportState() {
-    const state = await sendMessage({ action: 'getExportState' });
-
-    if (state && state.isRunning && state.phase) {
-        log(`Export in progress: ${state.phase} ${state.current}/${state.total}`);
-        showProgress(state.phase, state.current, state.total);
-
-        // Disable buttons while export is running
-        btnExportNew.disabled = true;
-        btnExportCurrent.disabled = true;
-        btnExportAll.disabled = true;
-    }
+    try {
+        const state = await chrome.runtime.sendMessage({ action: 'getExportState' });
+        if (state && (state.status || !state.error)) renderJobState(state);
+        else if (state?.error && !state.status) log(`Cannot read export status: ${state.error}`, 'error');
+    } catch (error) { log(`Cannot read export status: ${error.message}`, 'error'); }
 }
+
+// Keep countdowns and completion current without flooding the visible log.
+setInterval(() => {
+    if (lastJobState?.isRunning) checkExportState();
+    else if (lastJobState?.phase) renderJobState(lastJobState);
+}, 1000);
 
 // Initialize
 document.addEventListener('DOMContentLoaded', async () => {

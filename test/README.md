@@ -168,3 +168,26 @@ When implementing the modifications:
 3. **Branching info location:** Look in `conversation.mapping[nodeId].message.metadata` for `branching_from_conversation_id` and `branching_from_conversation_title`
 4. **Tag sanitization:** NO underscores allowed in tags, only lowercase letters/numbers/hyphens
 5. **Test against expected outputs:** The .md files in `test-vault/` are the source of truth
+
+
+## Export recovery (2.3.0)
+
+Run `npm ci` once, then `npm test`. The dependency `fake-indexeddb` exercises the
+actual transactional job store without contacting ChatGPT. `npm run test:recovery`
+runs the recovery, structured content-error and normal-popup visibility checks.
+
+The regression scenario fetches 216 of 2,515 conversations, injects a 429 at 217,
+recreates the worker's runner and store, verifies that an early resume issues no
+requests, then completes every conversation without refetching the first 216.
+Other cases cover exponential delays, both Retry-After formats, persistent
+throttling, isolated successes, cached discovery pages, account changes, output
+failures, checkpoint failures, alarm recovery and pause/resume controls.
+
+Popup tests verify visible warnings, saved counts, retry times, persistent errors
+and restoration of the event log when reopening. Existing download tests still
+verify that Chrome must finish every requested format before history advances.
+
+For a manual browser check, reload the unpacked extension and its ChatGPT tab.
+Start an export, close the popup, reopen it and check that status is restored.
+Pause and resume to verify the fetched count stays intact. Do not use a live
+account to deliberately provoke rate limits; the automated tests simulate them.

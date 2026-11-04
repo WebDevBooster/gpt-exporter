@@ -1,5 +1,39 @@
 # GPT Exporter
 
+### Resumable exports and visible failures (2.3.0)
+
+HTTP 429 pauses the entire export queue. Automatic cooldowns increase from 60 to
+120, 240, 480 and 900 seconds, with a small random addition. A longer server
+`Retry-After` always takes precedence. After six consecutive throttled attempts,
+the job stays paused until you resume it. A successful probe resumes requests at
+slower spacing; a single success does not reset the backoff history.
+
+Each successful fetch is saved in IndexedDB. Worker shutdown, browser restart,
+network failures and interrupted downloads preserve the fetched conversations.
+The extension continues eligible jobs through Chrome alarms while Chrome is
+running. Alarms can run late, particularly after device sleep. Keep a logged-in
+ChatGPT tab available in the same account and workspace. Persistent failures
+pause the job instead of skipping conversations or reporting incomplete success.
+
+The extension window shows the job status above the settings, with fetched,
+pending and saved counts, a retry time and the current error. Warning and error
+events are saved with the job and restored when you reopen the window. The
+extension icon shows `429` during cooldown and `!` when action is required.
+Use **Pause Export**, **Resume Export** or **Discard Saved Job** to manage an
+unfinished export. Discarding a job does not bypass an active server cooldown.
+
+Output is prepared in batches of at most 100 conversations to bound memory use.
+Larger exports produce numbered ZIP parts when exporting Markdown, or multiple
+JSON backups when only JSON is selected. Each batch enters New/Updated history
+only after all its requested files finish saving. A worker interruption during
+saving can cause the current batch to be downloaded again, but cannot cause it
+to be silently omitted. Fetched data is removed when a job completes or is
+explicitly discarded. The latest job's status and recent events remain visible.
+
+To update an unpacked installation, reload **GPT Exporter** on
+`chrome://extensions/`, then reload the ChatGPT tab. Version 2.3.0 cannot recover
+fetches held only in memory by an older version.
+
 ### Download completion (2.2.1)
 
 An export succeeds and updates “New/Updated” history only after Chrome finishes
@@ -26,12 +60,13 @@ Despite the added frontmatter, the combined size of all `.md` files GPT Exporter
 This also means:  
 Some of those lean but context-rich Markdown files could also be used for giving context to ChatGPT or other LLMs when you start a new project etc. (Leaner is better because context-window bloat tends to degrade LLM performance.)
 
-### Deliberately slow download to avoid issues
+### Request pacing
 
-This extension is deliberately designed to work *slowly* and will also make a random pause between 2 and 4 minutes after downloading every 100 conversations. This is to avoid any potential issues like rate limiting that ChatGPT might implement.  
-As a result, on average it downloads only about 10 conversations per minute. So, if you have 1,500 conversations in total, it could take 2.5 hours to download all. 
-
-During the download process you should NOT open new ChatGPT windows/tabs and should NOT work in existing ChatGPT tabs. Just pause all of your ChatGPT activity until the download is finished. 
+Requests start approximately three seconds apart, with additional scheduling
+breaks during long jobs. Throttling increases the spacing and pauses the queue.
+The extension cannot predict ChatGPT's server limits, so total export time varies.
+Avoid other ChatGPT activity during a large export because it may contribute to
+server limits outside this extension's control.
 
 ### Only enable for downloading, then disable 
 
@@ -41,7 +76,7 @@ During the download process you can open a new browser window and do any non-Cha
 
 If you use **Projects** in ChatGPT (like I do) to organize things, GPT Exporter will automatically create folders with those project names and put all the corresponding `.md` files inside. 
 
-If you export no more than 3 conversations, then the export will be separate `.md` files. And if it's more than 3, then the export will be one `.zip` file that contains all the files. 
+Small exports produce separate files. Larger Markdown exports produce ZIP files, with up to 100 conversations in each numbered part. A requested JSON backup is included with its batch.
 
 ### Manual changes will be overwritten on update
 
