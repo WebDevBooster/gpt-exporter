@@ -17,13 +17,13 @@ function element() {
         querySelector() { return this; }
     };
 }
-function fixture(state, connection = { connected: true }) {
+function fixture(state, connection = { connected: true }, availability = { available: true, conversationId: 'chat' }) {
     const elements = new Map();
     const get = id => { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); };
     const intervals = [], listeners = [];
     let initialize;
     const response = message => ({
-        checkConnection: connection, getCurrentConversationTarget: { available: true, conversationId: 'chat' },
+        checkConnection: connection, getCurrentConversationTarget: availability,
         getStats: { totalExported: 0 }, getExportState: state
     })[message.action];
     const context = vm.createContext({
@@ -138,4 +138,14 @@ test('Cancel remains available for paused Export All while Pause is a separate c
     f.update({ ...base, status: 'cancelled', phase: 'cancelled', isRunning: false, error: null, canCancel: false, canResume: false });
     assert.equal(f.get('btnExportAll').disabled, false);
     assert.equal(f.get('btnResume').classList.contains('hidden'), true);
+});
+
+
+test('missing Current Chat availability cannot add a false error to the Export All log', async () => {
+    const f = fixture({ isRunning: false, phase: null }, { connected: true },
+        { available: false, reason: 'No active ChatGPT conversation found.' });
+    await f.initialize();
+    assert.equal(f.get('btnExportCurrent').disabled, true);
+    assert.equal(f.get('btnExportAll').disabled, false);
+    assert.ok(f.get('logOutput').children.every(e => e.className !== 'log-entry error'));
 });

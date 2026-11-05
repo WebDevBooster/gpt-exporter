@@ -474,3 +474,14 @@ test('cancel during a pending download start cannot affect a later export or ack
     assert.equal((await fresh).totalExported, 1);
     assert.equal((await f.send({ action: 'getExportState' })).status, 'complete');
 });
+
+test('Export All remains available when the Current Chat button has no focused conversation', async () => {
+    const f = await fixture({ earlyState: 'complete' });
+    const query = chrome.tabs.query;
+    chrome.tabs.query = async options => options.active ? [] : query(options);
+    const availability = await f.send({ action: 'getCurrentConversationTarget' });
+    assert.equal(availability.available, false);
+    assert.equal(availability.error, undefined, 'Current Chat availability must not appear as an Export All error');
+    assert.match(availability.reason, /No active ChatGPT conversation/);
+    assert.equal((await f.send({ action: 'exportAll', formats: { markdown: true }, limit: 1 })).totalExported, 1);
+});

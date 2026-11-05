@@ -680,8 +680,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             case 'getStats': return getStats();
             case 'getExportState': return { ...stateFromJob(await jobStore.getJob(false)), ...(activeRun ? exportState : {}) };
             case 'getCurrentConversationTarget': {
-                const target = await getCurrentConversationTarget();
-                return { available: true, conversationId: target.conversationId, projectId: target.projectId };
+                try {
+                    const target = await getCurrentConversationTarget();
+                    return { available: true, conversationId: target.conversationId, projectId: target.projectId };
+                } catch (error) {
+                    // An unavailable Current Chat button is not an Export All failure.
+                    return { available: false, reason: error.message };
+                }
             }
             case 'exportAll': return startExport('all', message);
             case 'exportNewUpdated': return startExport('new', message);

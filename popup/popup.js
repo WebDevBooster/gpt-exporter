@@ -258,13 +258,17 @@ async function updateCurrentConversationAvailability() {
         return;
     }
 
-    const result = await sendMessage({ action: 'getCurrentConversationTarget' });
+    // Availability is optional UI state. It must not add a false export error
+    // when Export All is being used from another tab or a detached window.
+    let result;
+    try { result = await chrome.runtime.sendMessage({ action: 'getCurrentConversationTarget' }); }
+    catch (error) { result = { error: error.message }; }
     const isAvailable = !!(result && result.available && result.conversationId);
 
     btnExportCurrent.disabled = !isAvailable;
     btnExportCurrent.title = isAvailable
         ? 'Export only the active ChatGPT conversation tab'
-        : (result?.error || 'Open the ChatGPT conversation you want to export');
+        : (result?.reason || result?.error || 'Open the ChatGPT conversation you want to export');
 }
 
 /**
