@@ -15,6 +15,11 @@ arrive, including across worker restarts. The progress bar remains visible durin
 scheduled pauses, cooldown and manual pause, with the saved count and next
 attempt time.
 
+Expand **Conversation listing counts** to inspect the raw project and main-list
+entry counts, unique conversation IDs and repeated entries. The audit uses the
+actual saved API responses and includes example IDs when both lists returned the
+same conversation. Each unique conversation is fetched once.
+
 
 ### Detached window connection (2.3.1)
 

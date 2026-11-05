@@ -280,3 +280,35 @@ test('slow recovery pacing still makes progress after restarting between alarm r
     result = await f.run();
     assert.equal(result.totalExported, 2);
 });
+
+test('listing audit measures actual repeated IDs and survives payload cleanup', async () => {
+    const f = fixture();
+    const job = await f.create();
+    await f.store.commit(job, JSON.stringify({ action: 'getProjectConversations', projectId: 'p', cursor: '0' }), {
+        items: [{ id: 'a', title: 'Project only' }, { id: 'b', title: 'Returned twice' }]
+    });
+    await f.store.commit(job, JSON.stringify({ action: 'getConversationsList', offset: 0, limit: 28 }), {
+        items: [{ id: 'b', title: 'Returned twice' }, { id: 'c', title: 'Main only' }]
+    });
+    const audit = await f.store.getDiscoveryAudit(job);
+    assert.equal(audit.projectEntries, 2);
+    assert.equal(audit.mainEntries, 2);
+    assert.equal(audit.uniqueConversations, 3);
+    assert.equal(audit.repeatedEntries, 1);
+    assert.equal(audit.inBothLists, 1);
+    assert.deepEqual(audit.examples, [{ id: 'b', title: 'Returned twice' }]);
+    await f.store.clearResponses();
+    assert.deepEqual(await f.store.getDiscoveryAudit(job), audit);
+});
+
+test('listing audit reports no overlap when the returned conversation IDs are disjoint', async () => {
+    const f = fixture();
+    const job = await f.create();
+    await f.store.commit(job, JSON.stringify({ action: 'getProjectConversations', projectId: 'p', cursor: '0' }), { items: [{ id: 'a' }] });
+    await f.store.commit(job, JSON.stringify({ action: 'getConversationsList', offset: 0, limit: 28 }), { items: [{ id: 'b' }] });
+    const audit = await f.store.getDiscoveryAudit(job);
+    assert.equal(audit.uniqueConversations, 2);
+    assert.equal(audit.repeatedEntries, 0);
+    assert.equal(audit.inBothLists, 0);
+    assert.deepEqual(audit.examples, []);
+});

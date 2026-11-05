@@ -34,10 +34,42 @@ const btnPauseProcess = document.getElementById('btnPauseProcess');
 let lastJobState = null;
 let lastLogKey = '';
 const loggedEvents = new Set();
+let auditedTotal = null;
+let auditGeneration = 0;
+
+async function showListingAudit(state) {
+    const panel = document.getElementById('jobListingAudit');
+    if (state.listingComplete !== true) {
+        auditGeneration++;
+        auditedTotal = null;
+        panel.classList.add('hidden');
+        return;
+    }
+    if (auditedTotal === state.total) return;
+    auditedTotal = state.total;
+    const generation = ++auditGeneration;
+    try {
+        const { createExportStore } = await import('../lib/export-store.js');
+        const store = createExportStore();
+        const job = await store.getJob(false);
+        if (!job?.metaSaved) return;
+        const audit = await store.getDiscoveryAudit(job);
+        if (generation !== auditGeneration) return;
+        if (!audit.projectEntries && !audit.mainEntries) return;
+        document.getElementById('listingAuditCounts').textContent =
+            `${audit.projectEntries} project-list entries + ${audit.mainEntries} main-list entries = ${audit.projectEntries + audit.mainEntries} entries. ${audit.uniqueConversations} unique conversation IDs; ${audit.repeatedEntries} repeated entries. ${audit.inBothLists} IDs were returned by both API lists.`;
+        document.getElementById('listingAuditExamples').textContent = audit.examples.length
+            ? `Examples returned by both: ${audit.examples.map(e => `${e.title || 'Untitled'} (${e.id})`).join('; ')}` : '';
+        panel.classList.remove('hidden');
+    } catch (error) {
+        if (generation === auditGeneration) log(`Could not audit listing counts: ${error.message}`, 'error');
+    }
+}
 
 function renderJobState(state) {
     const previousStatus = lastJobState?.status;
     lastJobState = state;
+    showListingAudit(state);
     const unfinished = state.phase && !['complete', 'cancelled'].includes(state.status);
     jobStatus.classList.toggle('hidden', !state.phase);
     jobStatus.dataset.status = state.status || '';
