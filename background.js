@@ -18,6 +18,9 @@ const jobStore = createExportStore();
 let activeRun = null;
 let controlBusy = false;
 let pausing = false;
+let activeController = null;
+let activeJobId = null;
+let stopMode = null;
 let exportState = { isRunning: false, phase: null, cancelRequested: false };
 
 function updateExportState(phase, current, total) {
@@ -26,19 +29,31 @@ function updateExportState(phase, current, total) {
 }
 
 function checkCancellation() {
-    if (exportState.cancelRequested) throw new Error('Export paused by user. Progress is saved.');
+    if (exportState.cancelRequested) throw stopError(stopMode);
+}
+
+function stopError(mode) {
+    return Object.assign(new Error(mode === 'cancel'
+        ? 'Export cancelled by user (USER_CANCELED). You can start a new export.'
+        : 'Export paused by user. Progress is saved.'), {
+        code: mode === 'cancel' ? 'EXPORT_CANCELLED' : 'EXPORT_PAUSED'
+    });
 }
 
 function stateFromJob(job) {
     return job ? {
         isRunning: ['running', 'waiting', 'cooldown'].includes(job.status),
-        phase: job.phase, status: job.status, current: job.fetched, total: job.total,
-        fetched: job.fetched, pending: Math.max(0, job.total - job.fetched), saved: job.saved,
-        failed: job.status === 'paused' && job.error ? 1 : 0,
+        phase: job.phase, status: job.status, current: job.phase === 'fetching_list' ? job.listed || 0 : job.fetched, total: job.total,
+        fetched: job.fetched, pending: job.status === 'cancelled' ? 0 : Math.max(0, job.total - job.fetched), saved: job.saved,
+        failed: job.status === 'paused' && job.error && !job.error.startsWith('Export paused by user') ? 1 : 0,
         error: job.error, resumeAt: job.resumeAt, cooldownUntil: job.rate.cooldownUntil,
         retryLevel: job.rate.level, spacingMs: job.rate.spacingMs,
         events: job.events || [],
-        canResume: job.status === 'paused', canDiscard: job.status !== 'complete'
+        listed: job.listed || 0, projects: job.projects || 0, activity: job.activity,
+        listingComplete: !!job.metaSaved,
+        requests: job.requests || 0, lastSuccessAt: job.lastSuccessAt,
+        canResume: job.status === 'paused', canCancel: !['complete', 'cancelled'].includes(job.status),
+        canDiscard: !['complete', 'cancelled'].includes(job.status)
     } : { isRunning: false, phase: null };
 }
 
@@ -133,7 +148,8 @@ async function getExportTab() {
 /**
  * Send message to a specific ChatGPT tab
  */
-async function sendToTab(tab, message) {
+async function sendToTab(tab, message, signal) {
+    signal?.throwIfAborted();
     if (!tab?.id) {
         throw new Error('No valid ChatGPT tab available.');
     }
@@ -143,6 +159,7 @@ async function sendToTab(tab, message) {
         const response = await chrome.tabs.sendMessage(tab.id, message);
         return response;
     } catch (error) {
+        signal?.throwIfAborted();
         // Content script not loaded, try to inject it
         console.log(`[BG] Content script not responding on tab ${tab.id}, attempting injection...`);
 
@@ -155,6 +172,7 @@ async function sendToTab(tab, message) {
 
             // Wait for script to initialize
             await new Promise(r => setTimeout(r, 500));
+            signal?.throwIfAborted();
 
             // Try again
             const response = await chrome.tabs.sendMessage(tab.id, message);
@@ -169,13 +187,14 @@ async function sendToTab(tab, message) {
 /**
  * Send message to content script using cached tab
  */
-async function sendToContentScript(message) {
+async function sendToContentScript(message, signal) {
     const tab = await getExportTab();
+    signal?.throwIfAborted();
     try {
-        return await sendToTab(tab, message);
+        return await sendToTab(tab, message, signal);
     } catch (error) {
         // Clear the cached tab so we try a different one next time
-        cachedExportTab = null;
+        if (!signal?.aborted) cachedExportTab = null;
         throw error;
     }
 }
@@ -253,20 +272,20 @@ async function buildExportFiles(fullConversations, formats, reportProgress) {
     return filesToBundle;
 }
 
-async function downloadExportFiles(filesToBundle, folder = '', suffix = '') {
+async function downloadExportFiles(filesToBundle, folder = '', suffix = '', job, signal) {
     const results = [];
 
     if (filesToBundle.length > ZIP_THRESHOLD) {
         updateExportState('zipping', 0, filesToBundle.length);
         const today = new Date().toISOString().split('T')[0];
         const zipFilename = `ChatGPT_Export_${today}${suffix}.zip`;
-        await createZipBundle(filesToBundle, zipFilename, folder);
+        await createZipBundle(filesToBundle, zipFilename, folder, job, signal);
         results.push({ type: 'zip', filename: zipFilename, fileCount: filesToBundle.length });
         return results;
     }
 
     for (const file of filesToBundle) {
-        await downloadFile(file.filename, file.content, file.mimeType, folder);
+        await downloadFile(file.filename, file.content, file.mimeType, folder, job, signal);
         results.push({ type: file.mimeType.includes('markdown') ? 'markdown' : 'json', filename: file.filename });
     }
 
@@ -340,13 +359,13 @@ const downloadManager = createDownloadManager({
 /**
  * Download a blob and wait for successful terminal completion, including cleanup.
  */
-async function downloadBlobUrl(blobUrl, fullPath) {
-    updateExportState('saving', 0, 1);
+async function downloadBlobUrl(blobUrl, fullPath, job, signal) {
     let receipt;
     let existingId;
     let delegated = false;
     try {
-        const job = await jobStore.getJob(false);
+        signal?.throwIfAborted();
+        updateExportState('saving', 0, 1);
         const key = `download:${job.saved}:${fullPath}`;
         receipt = await jobStore.get(job, key);
         if (receipt) {
@@ -359,6 +378,7 @@ async function downloadBlobUrl(blobUrl, fullPath) {
         delegated = true;
         return await downloadManager.download(blobUrl, fullPath, {
             existingId,
+            isCancelled: () => !!signal?.aborted,
             waitTimeoutMs: Math.max(1, 600_000 - (Date.now() - startedAt)),
             onStarted: id => jobStore.put(job, key, { id, url: blobUrl, startedAt })
         });
@@ -373,7 +393,8 @@ async function downloadBlobUrl(blobUrl, fullPath) {
 /**
  * Download a file using Chrome downloads API
  */
-async function downloadFile(filename, content, mimeType = 'text/plain', folder = '') {
+async function downloadFile(filename, content, mimeType = 'text/plain', folder = '', job, signal) {
+    signal?.throwIfAborted();
     console.log(`[BG] downloadFile called with filename: "${filename}"`);
 
     let fullPath = filename;
@@ -388,7 +409,7 @@ async function downloadFile(filename, content, mimeType = 'text/plain', folder =
         // Use a Blob URL created in the offscreen document. Unlike data:
         // URLs, blob: URLs have no size limit in the downloads system.
         const blobUrl = await createBlobUrl(content, mimeType, false);
-        const downloadId = await downloadBlobUrl(blobUrl, fullPath);
+        const downloadId = await downloadBlobUrl(blobUrl, fullPath, job, signal);
 
         console.log(`[BG] Download complete: ${fullPath} (ID: ${downloadId})`);
 
@@ -405,7 +426,8 @@ async function downloadFile(filename, content, mimeType = 'text/plain', folder =
  * @param {string} zipFilename - Name of the output ZIP file
  * @param {string} folder - Optional folder path
  */
-async function createZipBundle(files, zipFilename, folder = '') {
+async function createZipBundle(files, zipFilename, folder = '', job, signal) {
+    signal?.throwIfAborted();
     console.log(`[BG] Creating ZIP bundle with ${files.length} files`);
 
     let fullPath = zipFilename;
@@ -426,7 +448,7 @@ async function createZipBundle(files, zipFilename, folder = '') {
         if (!response || !response.success) {
             throw new Error(`ZIP creation failed: ${response ? response.error : 'no response from offscreen document'}`);
         }
-        const downloadId = await downloadBlobUrl(response.url, fullPath);
+        const downloadId = await downloadBlobUrl(response.url, fullPath, job, signal);
 
         console.log(`[BG] ZIP download complete: ${fullPath} (ID: ${downloadId})`);
 
@@ -437,7 +459,7 @@ async function createZipBundle(files, zipFilename, folder = '') {
     }
 }
 
-async function projects(request) {
+async function projects(request, report = async () => {}) {
     const items = [];
     const seen = new Set();
     let cursor = null;
@@ -449,6 +471,7 @@ async function projects(request) {
             break;
         }
         items.push(...(response.items || []));
+        await report(items.length);
         cursor = response.cursor;
         if (cursor && seen.has(cursor)) throw new Error('Project pagination repeated a cursor. Export paused.');
         seen.add(cursor);
@@ -457,7 +480,7 @@ async function projects(request) {
     return items;
 }
 
-async function discover(job, request) {
+async function discover(job, request, report = async () => {}) {
     if (job.kind === 'current') {
         const meta = { id: job.target.conversationId };
         if (job.target.projectId) {
@@ -474,7 +497,8 @@ async function discover(job, request) {
     if (job.kind === 'new' && fetchLimit && (await getStats()).totalExported > 0) {
         fetchLimit = Math.max(fetchLimit * 3, fetchLimit + 100);
     }
-    for (const project of await projects(request)) {
+    const projectList = await projects(request, count => report(0, count));
+    for (const project of projectList) {
         const projectId = project.gizmo?.id || project.id;
         const projectName = project.gizmo?.display?.name || project.display?.name || projectId;
         if (!projectId) continue;
@@ -484,6 +508,7 @@ async function discover(job, request) {
             const response = await request({ action: 'getProjectConversations', projectId, cursor });
             if (!Array.isArray(response.items)) throw new Error('Invalid project conversation list. Export paused.');
             for (const item of response.items || []) all.set(item.id, { ...item, _projectId: projectId, _projectName: projectName });
+            await report(all.size, projectList.length);
             cursor = response.cursor;
             if (cursor && seen.has(cursor)) throw new Error('Conversation pagination repeated a cursor. Export paused.');
             seen.add(cursor);
@@ -496,6 +521,7 @@ async function discover(job, request) {
             if (!Array.isArray(response.items)) throw new Error('Invalid conversation list. Export paused.');
             if (!response.items.length) break;
             for (const item of response.items) if (!all.has(item.id)) all.set(item.id, item);
+            await report(all.size, projectList.length);
             if (fetchLimit && all.size >= fetchLimit) break;
         }
     }
@@ -510,11 +536,16 @@ const runner = createExportRunner({
     checkCancelled: checkCancellation,
     schedule: when => chrome.alarms.create(JOB_ALARM, { when }),
     notify: notifyJob,
-    async finishBatch(batch, job) {
-        const files = await buildExportFiles(batch, job.formats, updateExportState);
+    async finishBatch(batch, job, signal) {
+        const check = () => { signal?.throwIfAborted(); checkCancellation(); };
+        check();
+        const files = await buildExportFiles(batch, job.formats, (phase, current, total) => {
+            check();
+            updateExportState(phase, current, total);
+        });
         const suffix = job.total > 100 ? `_${job.id.slice(0, 8)}_part-${Math.floor(job.saved / 100) + 1}` : '';
-        const results = await downloadExportFiles(files, job.folder, suffix);
-        checkCancellation();
+        const results = await downloadExportFiles(files, job.folder, suffix, job, signal);
+        check();
         await markConversationsAsExported(batch);
         return results;
     }
@@ -523,19 +554,23 @@ const runner = createExportRunner({
 async function execute(job) {
     if (activeRun) throw new Error('An export is already running');
     exportState.cancelRequested = false;
+    stopMode = null;
+    activeController = new AbortController();
+    activeJobId = job.id;
+    const signal = activeController.signal;
     // A watchdog survives an unexpected termination in the middle of a fetch or
     // download. The next normal checkpoint replaces it with the precise alarm.
     // Only bounded work runs in an event. Cooldowns and long jobs continue via alarms.
     activeRun = (async () => {
         await chrome.alarms.create(JOB_ALARM, { when: Date.now() + 120_000 });
-        return runner.run(job);
+        return runner.run(job, { signal });
     })();
     try {
         const { job: checkpoint, ...result } = await activeRun;
-        if (!checkpoint || checkpoint.status === 'paused') await chrome.alarms.clear(JOB_ALARM);
+        if (!checkpoint || ['paused', 'cancelled'].includes(checkpoint.status)) await chrome.alarms.clear(JOB_ALARM);
         return result;
     }
-    finally { activeRun = null; }
+    finally { activeRun = null; activeController = null; activeJobId = null; }
 }
 
 async function startExport(kind, message) {
@@ -548,6 +583,7 @@ async function startExport(kind, message) {
         if (target) cachedExportTab = target.tab;
         const job = await runner.create({ kind, formats: message.formats, folder: message.downloadFolder || '',
             limit: Math.max(0, Number(message.limit) || 0), target });
+        notifyJob(job);
         return await execute(job);
     } finally { controlBusy = false; }
 }
@@ -557,27 +593,41 @@ async function resumeExport() {
     controlBusy = true;
     try {
         const job = await jobStore.getJob();
-        if (!job || job.status === 'complete') throw new Error('No unfinished export to resume');
+        if (!job || ['complete', 'cancelled'].includes(job.status)) throw new Error('No unfinished export to resume');
         job.rate.consecutive429 = 0;
         job.transient = null;
         return await execute(job);
     } finally { controlBusy = false; }
 }
 
-async function cancelExport() {
-    if (pausing) throw new Error('The export is already being paused.');
+async function stopExport(mode) {
+    if (pausing) throw new Error('The export is already stopping.');
     if (controlBusy && !activeRun) throw new Error('The export is starting. Try Pause again shortly.');
     pausing = true;
     try {
+        stopMode = mode;
         exportState.cancelRequested = true;
+        activeController?.abort(stopError(mode));
+        if (cachedExportTab?.id && activeJobId) {
+            // This control message only aborts requests. It makes no API calls.
+            chrome.tabs.sendMessage(cachedExportTab.id, { action: 'abortExportRequests', jobId: activeJobId }).catch(() => {});
+        }
         downloadManager.cancelPending();
         await chrome.alarms.clear(JOB_ALARM);
         if (activeRun) await activeRun;
         const job = await jobStore.getJob();
         if (!job || job.status === 'complete') return { success: false, error: 'No unfinished export' };
-        job.status = job.phase = 'paused';
-        job.error = 'Export paused by user. Progress is saved.';
-        recordJobEvent(job, job.error);
+        for (const receipt of await jobStore.getDownloads(job)) {
+            try {
+                const items = await chrome.downloads.search({ id: receipt.id });
+                if (items.some(item => item.state === 'in_progress')) await chrome.downloads.cancel(receipt.id);
+            } catch { /* A completed or removed download needs no cancellation. */ }
+        }
+        job.status = job.phase = mode === 'cancel' ? 'cancelled' : 'paused';
+        job.error = mode === 'cancel' ? null : stopError(mode).message;
+        job.activity = mode === 'cancel' ? 'Export cancelled. You can start a new export.' : job.error;
+        job.resumeAt = null;
+        if (job.events?.at(-1)?.message !== stopError(mode).message) recordJobEvent(job, stopError(mode).message);
         await jobStore.save(job);
         await chrome.alarms.clear(JOB_ALARM);
         notifyJob(job);
@@ -637,7 +687,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             case 'exportNewUpdated': return startExport('new', message);
             case 'exportCurrentConversation': return startExport('current', message);
             case 'resumeExport': return resumeExport();
-            case 'cancelExport': return cancelExport();
+            case 'cancelExport': return stopExport('cancel');
+            case 'pauseExport': return stopExport('pause');
             case 'discardExport':
                 if (activeRun || controlBusy || pausing) throw new Error('Pause the export before discarding it.');
                 controlBusy = true;

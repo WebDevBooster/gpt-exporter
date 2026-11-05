@@ -1,6 +1,6 @@
 (() => {
-if (globalThis.__gptExporterVersion === '2.3.0') return;
-globalThis.__gptExporterVersion = '2.3.0';
+if (globalThis.__gptExporterVersion === '2.3.2') return;
+globalThis.__gptExporterVersion = '2.3.2';
 /**
  * Content Script - runs in the context of chatgpt.com
  * This script can access the page's cookies for authenticated API calls
@@ -25,10 +25,10 @@ function httpError(response, detail = '') {
 /**
  * Fetch session to get access token
  */
-async function fetchSession() {
+async function fetchSession(signal) {
     console.log('[GPT-Exporter] Fetching session...');
     const response = await fetch(SESSION_API, {
-        credentials: 'include', signal: AbortSignal.timeout(30000)
+        credentials: 'include', signal
     });
 
     if (!response.ok) {
@@ -44,12 +44,12 @@ async function fetchSession() {
  * Get access token (cached)
  * @param {boolean} forceRefresh - Bypass the cache (e.g. after a 401)
  */
-async function getAccessToken(forceRefresh = false) {
+async function getAccessToken(forceRefresh = false, signal) {
     if (cachedAccessToken && !forceRefresh) {
         return cachedAccessToken;
     }
 
-    const session = await fetchSession();
+    const session = await fetchSession(signal);
     cachedAccessToken = session.accessToken;
     cachedUserId = session.user?.id;
     if (!cachedAccessToken || !cachedUserId) throw new Error('Log in to ChatGPT, then resume the export.');
@@ -69,16 +69,12 @@ function getWorkspaceAccountId() {
  */
 const FETCH_TIMEOUT_MS = 30000;
 
-async function apiRequest(endpoint, expectedAccount, isRetryAfter401 = false) {
+async function apiRequest(endpoint, expectedAccount, signal, isRetryAfter401 = false) {
     const url = `${API_BASE}${endpoint}`;
     console.log(`[GPT-Exporter Content] Requesting: ${url}`);
 
-    // Abort hung requests so exports don't stall indefinitely
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-
     try {
-        const accessToken = await getAccessToken(isRetryAfter401);
+        const accessToken = await getAccessToken(isRetryAfter401, signal);
         const accountId = getWorkspaceAccountId();
         if (expectedAccount && expectedAccount !== `${cachedUserId}:${accountId || 'personal'}`) {
             throw new Error('ChatGPT account or workspace changed. Switch back before resuming.');
@@ -101,7 +97,7 @@ async function apiRequest(endpoint, expectedAccount, isRetryAfter401 = false) {
             method: 'GET',
             credentials: 'include',
             headers: headers,
-            signal: controller.signal
+            signal
         });
 
         console.log(`[GPT-Exporter Content] Response status: ${response.status}`);
@@ -110,8 +106,7 @@ async function apiRequest(endpoint, expectedAccount, isRetryAfter401 = false) {
         if (response.status === 401 && !isRetryAfter401) {
             console.warn('[GPT-Exporter Content] Got 401, refreshing access token and retrying...');
             cachedAccessToken = null;
-            clearTimeout(timeoutId);
-            return apiRequest(endpoint, expectedAccount, true);
+            return apiRequest(endpoint, expectedAccount, signal, true);
         }
 
         if (!response.ok) {
@@ -131,17 +126,15 @@ async function apiRequest(endpoint, expectedAccount, isRetryAfter401 = false) {
         }
         console.error(`[GPT-Exporter Content] Fetch error:`, error);
         throw error;
-    } finally {
-        clearTimeout(timeoutId);
     }
 }
 
 // Each message performs at most one backend request. Pagination and fallback
 // decisions live in the worker so they share its pacing and durable cooldown.
-async function getProjectsPage(message) {
+async function getProjectsPage(message, signal) {
     if (message.source === 'dom') return { items: extractProjectsFromDOM() };
     if (message.source === 'discovery') {
-        const response = await apiRequest('/gizmos/discovery', message.accountKey);
+        const response = await apiRequest('/gizmos/discovery', message.accountKey, signal);
         const items = response.cuts
             ? response.cuts.flatMap(cut => cut.list?.items || []).map(item => ({ gizmo: item.resource?.gizmo || item.gizmo || item }))
             : response.items || response.projects || response.list || [];
@@ -149,7 +142,7 @@ async function getProjectsPage(message) {
     }
     let endpoint = '/gizmos/snorlax/sidebar?conversations_per_gizmo=5&owned_only=true';
     if (message.cursor) endpoint += `&cursor=${encodeURIComponent(message.cursor)}`;
-    const response = await apiRequest(endpoint, message.accountKey);
+    const response = await apiRequest(endpoint, message.accountKey, signal);
     if (!Array.isArray(response.items)) throw new Error('Invalid project list response. Export paused.');
     return {
         items: (response.items || []).map(item => {
@@ -217,26 +210,39 @@ function extractProjectUUID(fullProjectId) {
 /**
  * Listen for messages from the extension
  */
+const activeRequests = new Set();
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.action === 'abortExportRequests') {
+        for (const request of activeRequests) {
+            if (request.jobId === message.jobId) request.controller.abort();
+        }
+        sendResponse({ success: true });
+        return false;
+    }
     console.log('[GPT-Exporter Content] Received message:', message.action);
 
     const handleAsync = async () => {
+        const controller = new AbortController();
+        const request = { jobId: message.jobId, controller };
+        activeRequests.add(request);
+        const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+        const signal = controller.signal;
         try {
             switch (message.action) {
                 case 'getConversationsList':
-                    return await apiRequest(`/conversations?offset=${message.offset || 0}&limit=${message.limit || 28}`, message.accountKey);
+                    return await apiRequest(`/conversations?offset=${message.offset || 0}&limit=${message.limit || 28}`, message.accountKey, signal);
 
                 case 'getConversation':
-                    return await apiRequest(`/conversation/${encodeURIComponent(message.id)}`, message.accountKey);
+                    return await apiRequest(`/conversation/${encodeURIComponent(message.id)}`, message.accountKey, signal);
 
                 case 'getProjectsList':
-                    return await getProjectsPage(message);
+                    return await getProjectsPage(message, signal);
 
                 case 'getProjectConversations':
-                    return await apiRequest(`/gizmos/${extractProjectUUID(message.projectId)}/conversations?cursor=${encodeURIComponent(message.cursor || '0')}`, message.accountKey);
+                    return await apiRequest(`/gizmos/${extractProjectUUID(message.projectId)}/conversations?cursor=${encodeURIComponent(message.cursor || '0')}`, message.accountKey, signal);
 
                 case 'getAccountContext':
-                    await getAccessToken(true);
+                    await getAccessToken(true, signal);
                     return { accountKey: `${cachedUserId}:${getWorkspaceAccountId() || 'personal'}` };
 
                 case 'ping':
@@ -250,6 +256,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             console.error('[GPT-Exporter Content] Error:', error);
             return { error: error.message, status: error.status || null,
                 retryAfter: error.retryAfter || null, detail: error.detail || null };
+        } finally {
+            clearTimeout(timeoutId);
+            activeRequests.delete(request);
         }
     };
 

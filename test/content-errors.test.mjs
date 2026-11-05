@@ -16,6 +16,11 @@ function fixture(responses) {
             calls.push({ url, options });
             const next = responses.shift();
             assert.ok(next, `Unexpected fetch: ${url}`);
+            if (next.wait) return new Promise((resolve, reject) => {
+                const abort = () => reject(new DOMException('Request aborted', 'AbortError'));
+                options.signal.addEventListener('abort', abort, { once: true });
+                if (options.signal.aborted) abort();
+            });
             return new Response(JSON.stringify(next.body || {}), { status: next.status || 200, headers: next.headers });
         }
     });
@@ -78,4 +83,18 @@ test('reinjecting the same content script does not register duplicate listeners'
     const f = fixture([]);
     vm.runInContext(source, f.context);
     assert.equal(f.handlers.length, 1);
+});
+
+
+test('cancel aborts the owned session request and leaves a fresh job able to fetch', async () => {
+    const f = fixture([{ wait: true }, session(), { body: { id: 'conversation', mapping: {} } }]);
+    const pending = f.send({ action: 'getAccountContext', jobId: 'old-job' });
+    assert.equal(f.calls.length, 1);
+    await f.send({ action: 'abortExportRequests', jobId: 'another-job' });
+    assert.equal(f.calls[0].options.signal.aborted, false);
+    await f.send({ action: 'abortExportRequests', jobId: 'old-job' });
+    assert.equal(f.calls[0].options.signal.aborted, true);
+    assert.ok((await pending).error);
+    const next = await f.send({ action: 'getConversation', id: 'conversation', jobId: 'new-job' });
+    assert.equal(next.id, 'conversation');
 });

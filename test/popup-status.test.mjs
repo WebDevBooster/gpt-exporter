@@ -53,7 +53,7 @@ function fixture(state, connection = { connected: true }) {
 }
 const base = { isRunning: true, status: 'cooldown', phase: 'cooldown', fetched: 216, pending: 2299, total: 2515,
     saved: 0, failed: 0, error: 'ChatGPT rate limit. Progress is saved.', resumeAt: Date.now() + 120_000,
-    retryLevel: 2, canResume: false, canDiscard: true };
+    retryLevel: 2, canResume: false, canDiscard: true, canCancel: true };
 
 test('reopening the normal popup restores a visible throttle warning, counts and retry time', async () => {
     const f = fixture(base);
@@ -67,7 +67,7 @@ test('reopening the normal popup restores a visible throttle warning, counts and
     assert.ok(f.get('logOutput').children.some(entry => /rate limit/.test(entry.textContent)));
 });
 
-test('an exhausted retry becomes a persistent visible error with Resume and Discard', async () => {
+test('an exhausted retry becomes a persistent visible error with Resume and Cancel', async () => {
     const paused = { ...base, isRunning: false, status: 'paused', phase: 'paused', failed: 1,
         error: 'Rate limit persists. Progress is saved. Resume later.', canResume: true };
     const f = fixture(paused);
@@ -75,7 +75,7 @@ test('an exhausted retry becomes a persistent visible error with Resume and Disc
     assert.equal(f.get('jobStatus').dataset.status, 'paused');
     assert.equal(f.get('jobMessage').textContent, paused.error);
     assert.equal(f.get('btnResume').classList.contains('hidden'), false);
-    assert.equal(f.get('btnDiscard').classList.contains('hidden'), false);
+    assert.equal(f.get('btnCancelProcess').classList.contains('hidden'), false);
     assert.equal(f.get('btnExportAll').disabled, true);
     assert.ok(f.get('logOutput').children.some(entry => entry.className === 'log-entry error' && /Resume later/.test(entry.textContent)));
 });
@@ -122,4 +122,20 @@ test('an absent ChatGPT tab displays its actual connection error', async () => {
     await f.initialize();
     assert.equal(f.get('connectionStatus').textContent, 'Connection unavailable');
     assert.equal(f.get('connectionStatus').title, detail);
+});
+
+
+test('Cancel remains available for paused Export All while Pause is a separate control', async () => {
+    const f = fixture({ ...base, isRunning: false, status: 'paused', phase: 'paused', canResume: true });
+    await f.initialize();
+    assert.equal(f.get('btnCancelProcess').classList.contains('hidden'), false);
+    assert.equal(f.get('btnCancelProcess').disabled, false);
+    assert.equal(f.get('btnPauseProcess').classList.contains('hidden'), true);
+    f.update({ ...base, status: 'running', phase: 'fetching_list', listed: 112, activity: 'Listing conversations from item 113' });
+    assert.equal(f.get('btnPauseProcess').classList.contains('hidden'), false);
+    assert.match(f.get('jobCounts').textContent, /112 listed/);
+    assert.equal(f.get('jobMessage').textContent, 'ChatGPT rate limit. Progress is saved.');
+    f.update({ ...base, status: 'cancelled', phase: 'cancelled', isRunning: false, error: null, canCancel: false, canResume: false });
+    assert.equal(f.get('btnExportAll').disabled, false);
+    assert.equal(f.get('btnResume').classList.contains('hidden'), true);
 });

@@ -8,6 +8,7 @@ function event() {
     return {
         addListener: fn => listeners.add(fn),
         removeListener: fn => listeners.delete(fn),
+        clear: () => listeners.clear(),
         emit: value => Promise.all([...listeners].map(fn => fn(value)))
     };
 }
@@ -47,8 +48,9 @@ async function fixture({ count = 1, startError, earlyState } = {}) {
     const generated = [];
     const onChanged = event();
     const onAlarm = event();
-    const alarms = new Map(), badges = [], requests = [];
+    const alarms = new Map(), badges = [], requests = [], notifications = [];
     let responder;
+    let downloadStart;
     let handler;
     globalThis.chrome = {
         alarms: { onAlarm, async create(name, info) { alarms.set(name, info); }, async clear(name) { alarms.delete(name); } },
@@ -63,6 +65,7 @@ async function fixture({ count = 1, startError, earlyState } = {}) {
             onMessage: { addListener(fn) { handler = fn; } },
             async getPlatformInfo() { return {}; },
             async sendMessage(msg) {
+                if (msg.type === 'progress') notifications.push({ phase: msg.phase, status: msg.status, listed: msg.listed, fetched: msg.fetched, activity: msg.activity });
                 if (msg.action === 'revoke-blob-url') revoked.push(msg.url);
                 if (msg.action === 'create-blob-url' || msg.action === 'create-zip-blob-url') {
                     generated.push(msg);
@@ -77,6 +80,7 @@ async function fixture({ count = 1, startError, earlyState } = {}) {
             async get() { return { id: 1, url: `https://chatgpt.com/c/${conversations[0].id}` }; },
             async sendMessage(id, msg) {
                 requests.push(msg);
+                if (msg.action === 'abortExportRequests') return { success: true };
                 const intercepted = responder?.(msg);
                 if (intercepted) return intercepted;
                 if (msg.action === 'getAccountContext') return { accountKey: 'fixture:personal' };
@@ -92,6 +96,7 @@ async function fixture({ count = 1, startError, earlyState } = {}) {
                 if (startError) throw new Error(startError);
                 const item = { id: downloads.length + 1, state: 'in_progress', options };
                 downloads.push(item);
+                if (downloadStart) return downloadStart(item);
                 if (earlyState) {
                     item.state = earlyState;
                     item.error = earlyState === 'interrupted' ? 'FILE_FAILED' : undefined;
@@ -119,12 +124,15 @@ async function fixture({ count = 1, startError, earlyState } = {}) {
         return result;
     }
     const history = () => Object.keys(storage.gpt_exporter_sync_data?.exportedConversations || {});
-    const f = { send, downloads, generated, revoked, history, finish, conversations, alarms, badges, requests,
+    const f = { send, downloads, generated, revoked, history, finish, conversations, alarms, badges, requests, notifications,
         set responder(fn) { responder = fn; },
+        set downloadStart(fn) { downloadStart = fn; },
         advanceTo(time) { virtualTime = time; },
         alarm: () => onAlarm.emit({ name: 'gpt-exporter-resume' }),
         async restart() {
             // Drop listeners with the old worker; the IndexedDB factory survives.
+            onAlarm.clear();
+            onChanged.clear();
             await import(`../background.js?download-fixture=${++serial}`);
             await send({ action: 'getExportState' });
         },
@@ -254,7 +262,7 @@ test('Cancel Export cancels the owned download and leaves history unchanged', { 
     const result = f.send({ action: 'exportCurrentConversation', formats: { markdown: true } });
     await until(() => f.downloads.length === 1);
     assert.equal((await f.send({ action: 'cancelExport' })).success, true);
-    assert.match((await result).error, /USER_CANCELED/);
+    assert.equal((await result).cancelled, true);
     assert.equal(f.downloads[0].state, 'interrupted');
     assert.deepEqual(f.history(), []);
     assert.deepEqual(f.revoked, ['blob:fixture-1']);
@@ -290,7 +298,7 @@ test('overlapping exports are blocked and user pause keeps fetched payloads for 
     await until(() => f.downloads.length === 1);
     assert.match((await f.send({ action: 'exportAll', formats: { markdown: true } })).error, /already running/);
     assert.match((await f.send({ action: 'discardExport' })).error, /Pause/);
-    await f.send({ action: 'cancelExport' });
+    await f.send({ action: 'pauseExport' });
     await first;
     const state = await f.send({ action: 'getExportState' });
     assert.equal(state.status, 'paused');
@@ -367,4 +375,102 @@ test('connection checks preserve a content-script failure for the extension wind
     const result = await f.send({ action: 'checkConnection' });
     assert.equal(result.connected, false);
     assert.equal(result.error, 'The ChatGPT page needs reloading.');
+});
+
+
+test('Export All: 2515 conversations traverse pagination, 429 at 217 and worker restarts to completion', { timeout: 30000 }, async () => {
+    const f = await fixture({ count: 2515, earlyState: 'complete' });
+    let throttle = true;
+    f.responder = msg => {
+        if (msg.action === 'getConversationsList') return { items: structuredClone(f.conversations.slice(msg.offset, msg.offset + msg.limit)) };
+        if (msg.action === 'getConversation' && msg.id === f.conversations[216].id && throttle) {
+            throttle = false;
+            return { error: '429', status: 429, retryAfter: '120' };
+        }
+        return null;
+    };
+    await f.send({ action: 'exportAll', formats: { markdown: true } });
+    let rounds = 0;
+    for (;;) {
+        const state = await f.send({ action: 'getExportState' });
+        if (state.status === 'complete') break;
+        assert.ok(['waiting', 'cooldown'].includes(state.status), JSON.stringify(state));
+        assert.ok(++rounds < 300, 'Export All must make progress rather than endlessly reschedule');
+        f.advanceTo(state.resumeAt);
+        await f.restart();
+        await f.alarm();
+    }
+    assert.ok(rounds > 50, 'This test must exercise many bounded worker runs');
+    assert.equal(f.history().length, 2515);
+    assert.equal(f.requests.filter(r => r.action === 'getConversation').length, 2516, 'Only the throttled conversation is retried');
+    assert.equal(f.requests.filter(r => r.action === 'getConversation' && r.id === f.conversations[0].id).length, 1);
+    assert.equal(f.requests.filter(r => r.action === 'getConversation' && r.id === f.conversations[216].id).length, 2);
+    assert.equal(f.requests.filter(r => r.action === 'getConversationsList').length, 91, 'Successful list pages must be reused after restarts');
+    const listing = f.notifications.filter(n => n.phase === 'fetching_list').map(n => n.listed || 0);
+    assert.ok(listing.some(n => n > 0), 'Listing progress must be visible before conversation contents are fetched');
+    assert.ok(listing.every((n, i) => !i || n >= listing[i - 1]), 'Resuming discovery must not reset its visible progress');
+    assert.equal(f.alarms.size, 0);
+});
+
+for (const blockedAction of ['getAccountContext', 'getConversationsList', 'getConversation']) {
+test(`Cancel Export All interrupts ${blockedAction}, clears scheduling and allows a fresh export`, { timeout: 5000 }, async () => {
+    const f = await fixture({ earlyState: 'complete' });
+    let resolveLate;
+    f.responder = msg => msg.action === blockedAction
+        ? new Promise(resolve => { resolveLate = resolve; }) : null;
+    const first = f.send({ action: 'exportAll', formats: { markdown: true }, limit: 1 });
+    await until(() => !!resolveLate);
+    assert.equal((await f.send({ action: 'cancelExport' })).success, true);
+    assert.equal((await first).cancelled, true);
+    const cancelled = await f.send({ action: 'getExportState' });
+    assert.equal(cancelled.status, 'cancelled');
+    assert.equal(cancelled.canCancel, false);
+    assert.equal(cancelled.canResume, false);
+    assert.equal(f.alarms.size, 0);
+    f.responder = null;
+    const next = await f.send({ action: 'exportAll', formats: { markdown: true }, limit: 1 });
+    assert.equal(next.totalExported, 1);
+    resolveLate(structuredClone(f.conversations[0]));
+    await tick();
+    assert.equal((await f.send({ action: 'getExportState' })).status, 'complete', 'A late response cannot resurrect the cancelled job');
+});
+
+}
+
+test('Cancel works during cooldown and paused jobs without bypassing the server deadline', async () => {
+    const f = await fixture();
+    f.responder = msg => msg.action === 'getConversation' ? { error: '429', status: 429, retryAfter: '120' } : null;
+    await f.send({ action: 'exportAll', formats: { markdown: true }, limit: 1 });
+    const cooldown = await f.send({ action: 'getExportState' });
+    assert.equal(cooldown.status, 'cooldown');
+    await f.send({ action: 'pauseExport' });
+    assert.equal((await f.send({ action: 'getExportState' })).canCancel, true);
+    await f.send({ action: 'cancelExport' });
+    assert.equal((await f.send({ action: 'getExportState' })).status, 'cancelled');
+    const count = f.requests.length;
+    await f.send({ action: 'exportAll', formats: { markdown: true }, limit: 1 });
+    assert.equal(f.requests.length, count);
+    assert.equal((await f.send({ action: 'getExportState' })).resumeAt, cooldown.resumeAt);
+});
+
+
+test('cancel during a pending download start cannot affect a later export or acknowledge old output', async () => {
+    const f = await fixture();
+    let releaseOld;
+    f.downloadStart = item => new Promise(resolve => { releaseOld = () => resolve(item.id); });
+    const first = f.send({ action: 'exportAll', formats: { markdown: true }, limit: 1 });
+    await until(() => !!releaseOld);
+    await f.send({ action: 'cancelExport' });
+    assert.equal((await first).cancelled, true);
+    f.downloadStart = null;
+    const fresh = f.send({ action: 'exportAll', formats: { markdown: true }, limit: 1 });
+    await until(() => f.downloads.length === 2);
+    await tick();
+    releaseOld();
+    await until(() => f.downloads[0].state === 'interrupted');
+    assert.equal(f.downloads[1].state, 'in_progress', 'An old job must never cancel the new job’s download');
+    assert.deepEqual(f.history(), []);
+    f.finish(2, 'complete');
+    assert.equal((await fresh).totalExported, 1);
+    assert.equal((await f.send({ action: 'getExportState' })).status, 'complete');
 });

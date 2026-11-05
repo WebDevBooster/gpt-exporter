@@ -1,5 +1,19 @@
 # GPT Exporter
 
+### Export All progress and Cancel (2.3.2)
+
+**Cancel Export** ends the job, interrupts active fetches and owned downloads,
+stops its scheduled retries and lets you start another export. Already saved
+files and their export history are kept. Cancel works while running, waiting,
+cooling down or paused. It does not bypass a server's existing rate-limit deadline.
+**Pause Export** keeps the unfinished job available for **Resume Export**.
+
+Export All now shows listing progress before conversation contents are fetched:
+conversations found, projects found and the current request. This listing phase
+can take several minutes on a large account. The visible log updates as pages
+arrive, including across worker restarts.
+
+
 ### Detached window connection (2.3.1)
 
 The detached window can check its connection, read saved progress and control
@@ -27,8 +41,8 @@ The extension window shows the job status above the settings, with fetched,
 pending and saved counts, a retry time and the current error. Warning and error
 events are saved with the job and restored when you reopen the window. The
 extension icon shows `429` during cooldown and `!` when action is required.
-Use **Pause Export**, **Resume Export** or **Discard Saved Job** to manage an
-unfinished export. Discarding a job does not bypass an active server cooldown.
+Use **Pause Export**, **Resume Export** or **Cancel Export** to manage an
+unfinished export. Cancelling a job does not bypass an active server cooldown.
 
 Output is prepared in batches of at most 100 conversations to bound memory use.
 Larger exports produce numbered ZIP parts when exporting Markdown, or multiple

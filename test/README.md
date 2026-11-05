@@ -25,7 +25,7 @@ The formatting runner uses fixture data and expected files. Download regressions
 
 ## Download Completion Tests
 
-`npm run test:downloads` runs 20 checks using synthetic conversations. These cover
+`npm run test:downloads` uses synthetic conversations. These cover
 Current, All and New/Updated exports; pending, interrupted and completed saves;
 incremental retries; multiple formats; ZIPs; cancellation; early completion;
 failed starts; query failures and deadlines. Export history must remain unchanged
@@ -191,3 +191,19 @@ For a manual browser check, reload the unpacked extension and its ChatGPT tab.
 Start an export, close the popup, reopen it and check that status is restored.
 Pause and resume to verify the fetched count stays intact. Do not use a live
 account to deliberately provoke rate limits; the automated tests simulate them.
+
+
+## Export All and cancellation (2.3.2)
+
+The Export All regression runs 2,515 conversations through the production
+background dispatcher, paginated listing, IndexedDB store and normal 60-second
+worker slices. It recreates the worker between slices, injects a 429 at item 217
+and completes the entire export through scheduled alarms. It verifies that the
+first 216 are not refetched, listing pages are reused and visible listing progress
+never moves backwards.
+
+Cancellation checks cover a hanging session lookup, a hanging listing request,
+a hanging conversation fetch, cooldown, pause, active downloads and a download
+start that returns only after another export has begun. Cancel ends the job and
+allows a fresh Export All; Pause retains a resumable job. Completed output history
+must not advance because of a cancelled job's late response.

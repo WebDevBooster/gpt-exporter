@@ -30,7 +30,7 @@ const jobCounts = document.getElementById('jobCounts');
 const jobMessage = document.getElementById('jobMessage');
 const jobRetryTime = document.getElementById('jobRetryTime');
 const btnResume = document.getElementById('btnResume');
-const btnDiscard = document.getElementById('btnDiscard');
+const btnPauseProcess = document.getElementById('btnPauseProcess');
 let lastJobState = null;
 let lastLogKey = '';
 const loggedEvents = new Set();
@@ -38,7 +38,7 @@ const loggedEvents = new Set();
 function renderJobState(state) {
     const previousStatus = lastJobState?.status;
     lastJobState = state;
-    const unfinished = state.phase && state.status !== 'complete';
+    const unfinished = state.phase && !['complete', 'cancelled'].includes(state.status);
     jobStatus.classList.toggle('hidden', !state.phase);
     jobStatus.dataset.status = state.status || '';
     for (const event of state.events || []) {
@@ -49,36 +49,39 @@ function renderJobState(state) {
     }
     const titles = {
         running: 'Export in progress', cooldown: 'ChatGPT rate limit: export cooling down',
-        waiting: 'Export waiting to continue', paused: 'Export paused: action required', complete: 'Export complete'
+        waiting: 'Export waiting to continue', paused: 'Export paused', complete: 'Export complete', cancelled: 'Export cancelled'
     };
     jobStatusTitle.textContent = titles[state.status] || 'Export in progress';
-    jobCounts.textContent = `${state.fetched || 0} fetched · ${state.pending || 0} pending · ${state.saved || 0} saved · ${state.failed || 0} blocking errors`;
-    jobMessage.textContent = state.error || (state.status === 'complete' ? 'All requested files finished saving.' : 'Successful fetches are saved automatically.');
+    const pending = state.listingComplete === false && !['complete', 'cancelled'].includes(state.status) ? '?' : state.pending || 0;
+    jobCounts.textContent = `${state.listed || 0} listed · ${state.projects || 0} projects · ${state.fetched || 0} fetched · ${pending} pending · ${state.saved || 0} saved · ${state.failed || 0} blocking errors`;
+    jobMessage.textContent = state.error || (state.status === 'complete' ? 'All requested files finished saving.' : state.activity || 'Successful fetches are saved automatically.');
     const retryAt = state.status === 'cooldown' || state.status === 'waiting' ? state.resumeAt : state.cooldownUntil;
     const seconds = Math.max(0, Math.ceil(((retryAt || 0) - Date.now()) / 1000));
     jobRetryTime.textContent = retryAt && seconds > 0
         ? `${state.status === 'paused' ? 'Resume no earlier than' : 'Continues at or after'} ${new Date(retryAt).toLocaleTimeString()} (${seconds}s remaining)`
         : state.isRunning && state.status !== 'running' ? 'Waiting for Chrome to resume the job.' : '';
     btnResume.classList.toggle('hidden', !state.canResume);
-    btnDiscard.classList.toggle('hidden', !state.canDiscard || state.isRunning);
-    btnCancelProcess.disabled = !state.isRunning;
+    btnCancelProcess.classList.toggle('hidden', !state.canCancel);
+    btnCancelProcess.disabled = !state.canCancel;
+    btnPauseProcess.classList.toggle('hidden', !state.isRunning);
+    btnPauseProcess.disabled = !state.isRunning;
     if (unfinished) {
         btnExportNew.disabled = btnExportAll.disabled = btnExportCurrent.disabled = true;
     } else if (connectionStatus.classList.contains('connected')) {
         btnExportNew.disabled = btnExportAll.disabled = false;
         // The availability check additionally validates the focused chat tab.
-        if (state.status === 'complete' && previousStatus !== 'complete') {
-            updateStats();
+        if (['complete', 'cancelled'].includes(state.status) && previousStatus !== state.status) {
+            if (state.status === 'complete') updateStats();
             updateCurrentConversationAvailability();
         }
     }
-    if (state.phase && !['paused', 'cooldown', 'waiting'].includes(state.phase)) {
+    if (state.phase && !['paused', 'cooldown', 'waiting', 'cancelled'].includes(state.phase)) {
         showProgress(state.phase, state.current || 0, state.total || 0);
     } else hideProgress();
-    const logKey = `${state.status}:${state.phase}:${state.error || ''}:${state.retryLevel || 0}:${Math.floor((state.fetched || 0) / 25)}`;
+    const logKey = `${state.status}:${state.phase}:${state.error || ''}:${state.retryLevel || 0}:${Math.floor((state.fetched || 0) / 25)}:${state.listed || 0}:${state.activity || ''}`;
     if (state.phase && logKey !== lastLogKey) {
         const retry = state.resumeAt ? ` ${state.status === 'paused' ? 'Resume no earlier than' : 'Next attempt at or after'} ${new Date(state.resumeAt).toLocaleTimeString()}.` : '';
-        log(`${jobStatusTitle.textContent}. ${jobCounts.textContent}. ${state.error || ''}${retry}`,
+        log(`${jobStatusTitle.textContent}. ${jobCounts.textContent}. ${state.error || state.activity || ''}${retry}`,
             state.status === 'paused' ? 'error' : state.status === 'cooldown' ? 'warning' : 'info');
         lastLogKey = logKey;
     }
@@ -245,7 +248,7 @@ async function updateConnectionStatus() {
  * Enable current-chat export only when the active tab is a concrete conversation
  */
 async function updateCurrentConversationAvailability() {
-    if (lastJobState?.phase && lastJobState.status !== 'complete') {
+    if (lastJobState?.phase && !['complete', 'cancelled'].includes(lastJobState.status)) {
         btnExportCurrent.disabled = true;
         return;
     }
@@ -302,7 +305,7 @@ function showProgress(phase, current, total) {
 
     switch (phase) {
         case 'fetching_list':
-            phaseText = `Fetching conversation list... ${current}/${total || '?'}`;
+            phaseText = `Listing conversations... ${current} found`;
             percent = total ? (current / total) * 25 : 10;
             break;
         case 'fetching_conversations':
@@ -322,7 +325,7 @@ function showProgress(phase, current, total) {
             percent = 100;
             break;
         case 'saving':
-            phaseText = 'Saving export... waiting for Chrome to finish';
+            phaseText = 'Saving export... confirm Chrome’s Save dialog if it is open';
             percent = 95;
             break;
         default:
@@ -411,6 +414,7 @@ async function handleCancelProcess() {
     const result = await sendMessage({ action: 'cancelExport' });
     if (result?.error) log(result.error, 'error');
     await checkExportState();
+    await updateCurrentConversationAvailability();
 }
 
 async function handleResume() {
@@ -424,14 +428,9 @@ async function handleResume() {
     }
 }
 
-async function handleDiscard() {
-    if (!confirm('Discard this unfinished job and its saved fetches? Downloaded files and export history are kept.')) return;
-    const result = await sendMessage({ action: 'discardExport' });
-    if (!result?.error) {
-        lastLogKey = '';
-        await updateConnectionStatus();
-        await updateCurrentConversationAvailability();
-    }
+async function handlePause() {
+    const result = await sendMessage({ action: 'pauseExport' });
+    if (result?.error) log(result.error, 'error');
     await checkExportState();
 }
 
@@ -455,7 +454,7 @@ chrome.runtime.onMessage.addListener(message => {
 });
 
 btnResume.addEventListener('click', handleResume);
-btnDiscard.addEventListener('click', handleDiscard);
+btnPauseProcess.addEventListener('click', handlePause);
 
 // Auto-save settings on change
 downloadFolder.addEventListener('change', saveSettings);
