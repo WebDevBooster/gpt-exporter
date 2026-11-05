@@ -402,4 +402,5 @@ footer {
 .job-status[data-status="complete"] { border-color: #15803d; background: #f0fdf4; }
 .job-status p { margin: 6px 0 0; overflow-wrap: anywhere; }
 .job-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 8px; }
+.job-controls .btn-secondary { background: #e2e8f0; border-color: #64748b; color: #0f172a; }
 #btnCancelProcess { background: #fee2e2; border-color: #b91c1c; color: #991b1b; }
