@@ -613,14 +613,19 @@ chrome.runtime.onInstalled?.addListener(() => { ready.catch(console.error); });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.target === 'offscreen') return;
-    // Content scripts cannot start, discard or otherwise control export jobs.
-    if (sender.tab) return;
+    // Detached extension windows also have sender.tab. Trust the actual sender
+    // document, not whether Chrome happens to represent that document as a tab.
+    if (sender.id !== chrome.runtime.id || sender.url !== chrome.runtime.getURL('popup/popup.html')) {
+        sendResponse({ error: 'Exporter controls are only available from the extension window.' });
+        return false;
+    }
     (async () => {
         await ready;
         switch (message.action) {
             case 'checkConnection': {
                 const response = await sendToContentScript({ action: 'ping' });
-                return { connected: !!response?.success };
+                return response?.success ? { connected: true }
+                    : { connected: false, error: response?.error || 'The ChatGPT tab did not respond. Reload it and try again.' };
             }
             case 'getStats': return getStats();
             case 'getExportState': return { ...stateFromJob(await jobStore.getJob(false)), ...(activeRun ? exportState : {}) };

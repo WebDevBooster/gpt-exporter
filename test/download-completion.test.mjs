@@ -58,6 +58,8 @@ async function fixture({ count = 1, startError, earlyState } = {}) {
             async set(values) { Object.assign(storage, structuredClone(values)); }
         } },
         runtime: {
+            id: 'fixture-extension',
+            getURL: path => `chrome-extension://fixture-extension/${path}`,
             onMessage: { addListener(fn) { handler = fn; } },
             async getPlatformInfo() { return {}; },
             async sendMessage(msg) {
@@ -108,8 +110,11 @@ async function fixture({ count = 1, startError, earlyState } = {}) {
     }
     await import(`../background.js?download-fixture=${++serial}`);
     const exports = [];
-    function send(message) {
-        const result = new Promise(resolve => handler(message, {}, resolve));
+    function send(message, sender = { id: chrome.runtime.id, url: chrome.runtime.getURL('popup/popup.html') }) {
+        // Chrome closes the channel if the listener returns without replying.
+        const result = new Promise(resolve => {
+            if (handler(message, sender, resolve) !== true) resolve(undefined);
+        });
         if (message.action.startsWith('export') || message.action === 'resumeExport') exports.push(result);
         return result;
     }
@@ -315,4 +320,51 @@ test('resuming a partly saved batch reuses its completed file receipt instead of
     assert.equal((await retry).totalExported, 1);
     assert.equal(f.downloads.length, 3, 'The completed Markdown file must not be downloaded twice');
     assert.equal(f.history().length, 1);
+});
+
+
+for (const detached of [false, true]) {
+    test(`${detached ? 'detached window' : 'toolbar popup'} can check connection, read saved state and export`, async () => {
+        const f = await fixture({ earlyState: 'complete' });
+        f.responder = msg => msg.action === 'ping' ? { success: true } : null;
+        const url = chrome.runtime.getURL('popup/popup.html');
+        const sender = { id: chrome.runtime.id, url, ...(detached ? { tab: { id: 99, url, windowId: 2 } } : {}) };
+        assert.equal((await f.send({ action: 'checkConnection' }, sender)).connected, true);
+        assert.equal((await f.send({ action: 'getExportState' }, sender)).isRunning, false);
+        const result = await f.send({ action: 'exportAll', formats: { markdown: true }, limit: 1 }, sender);
+        assert.equal(result.totalExported, 1);
+        assert.equal(f.history().length, 1);
+    });
+}
+
+test('web content and unrelated extension documents cannot control the saved export', async () => {
+    const f = await fixture();
+    const first = f.send({ action: 'exportAll', formats: { markdown: true }, limit: 1 });
+    await until(() => f.downloads.length === 1);
+    const before = await f.send({ action: 'getExportState' });
+    for (const sender of [
+        { id: chrome.runtime.id, url: 'https://chatgpt.com/', tab: { id: 1 } },
+        { id: chrome.runtime.id, url: chrome.runtime.getURL('offscreen.html') },
+        { id: 'another-extension', url: chrome.runtime.getURL('popup/popup.html') },
+        {}
+    ]) {
+        for (const action of ['discardExport', 'cancelExport', 'clearHistory', 'getStats']) {
+            const denied = await f.send({ action }, sender);
+            assert.match(denied.error, /extension window/);
+        }
+    }
+    const after = await f.send({ action: 'getExportState' });
+    assert.equal(after.fetched, before.fetched);
+    assert.equal(after.status, before.status);
+    f.finish(1, 'complete');
+    assert.equal((await first).totalExported, 1);
+});
+
+
+test('connection checks preserve a content-script failure for the extension window', async () => {
+    const f = await fixture();
+    f.responder = msg => msg.action === 'ping' ? { error: 'The ChatGPT page needs reloading.' } : null;
+    const result = await f.send({ action: 'checkConnection' });
+    assert.equal(result.connected, false);
+    assert.equal(result.error, 'The ChatGPT page needs reloading.');
 });

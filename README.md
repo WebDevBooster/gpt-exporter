@@ -1,5 +1,13 @@
 # GPT Exporter
 
+### Detached window connection (2.3.1)
+
+The detached window can check its connection, read saved progress and control
+exports just like the toolbar popup. Version 2.3.0 incorrectly rejected messages
+from detached windows because Chrome identifies them as tabs. A failed connection
+now shows “Connection unavailable” with the actual error in the log, rather than
+claiming you are not logged in.
+
 ### Resumable exports and visible failures (2.3.0)
 
 HTTP 429 pauses the entire export queue. Automatic cooldowns increase from 60 to

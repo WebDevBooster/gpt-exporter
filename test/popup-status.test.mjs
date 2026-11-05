@@ -17,13 +17,13 @@ function element() {
         querySelector() { return this; }
     };
 }
-function fixture(state) {
+function fixture(state, connection = { connected: true }) {
     const elements = new Map();
     const get = id => { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); };
     const intervals = [], listeners = [];
     let initialize;
     const response = message => ({
-        checkConnection: { connected: true }, getCurrentConversationTarget: { available: true, conversationId: 'chat' },
+        checkConnection: connection, getCurrentConversationTarget: { available: true, conversationId: 'chat' },
         getStats: { totalExported: 0 }, getExportState: state
     })[message.action];
     const context = vm.createContext({
@@ -102,4 +102,24 @@ test('reopening after recovery shows saved warnings with their original event ti
     const count = f.get('logOutput').children.length;
     f.intervals[0]();
     assert.equal(f.get('logOutput').children.length, count, 'Repainting completion must not flood the log');
+});
+
+
+test('a failed worker connection is never labelled as a ChatGPT logout', async () => {
+    const detail = 'No response from background script';
+    const f = fixture({ isRunning: false, phase: null }, { error: detail });
+    await f.initialize();
+    assert.equal(f.get('connectionStatus').textContent, 'Connection unavailable');
+    assert.equal(f.get('connectionStatus').title, detail);
+    assert.ok(f.get('logOutput').children.some(e => e.className === 'log-entry error' && e.textContent.includes(detail)));
+    assert.ok(f.get('logOutput').children.every(e => !/please log in/i.test(e.textContent)));
+    assert.equal(f.get('btnExportAll').disabled, true);
+});
+
+test('an absent ChatGPT tab displays its actual connection error', async () => {
+    const detail = 'No ChatGPT tab found. Please open chatgpt.com first.';
+    const f = fixture({ isRunning: false, phase: null }, { error: detail });
+    await f.initialize();
+    assert.equal(f.get('connectionStatus').textContent, 'Connection unavailable');
+    assert.equal(f.get('connectionStatus').title, detail);
 });

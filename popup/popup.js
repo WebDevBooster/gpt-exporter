@@ -224,17 +224,20 @@ async function updateConnectionStatus() {
     if (result && result.connected) {
         connectionStatus.classList.add('connected');
         connectionStatus.querySelector('.status-text').textContent = 'Connected';
+        connectionStatus.title = 'Connected to the ChatGPT tab';
         btnExportNew.disabled = false;
         btnExportAll.disabled = false;
         btnExportCurrent.disabled = false;
         log('Connected to ChatGPT', 'success');
     } else {
+        const reason = result?.error || 'The extension could not connect to the ChatGPT tab. Reload the tab and try again.';
         connectionStatus.classList.add('disconnected');
-        connectionStatus.querySelector('.status-text').textContent = 'Not logged in';
+        connectionStatus.querySelector('.status-text').textContent = 'Connection unavailable';
+        connectionStatus.title = reason;
         btnExportNew.disabled = true;
         btnExportAll.disabled = true;
         btnExportCurrent.disabled = true;
-        log('Not connected - please log in to chatgpt.com', 'error');
+        log(`Connection unavailable: ${reason}`, 'error');
     }
 }
 
@@ -248,7 +251,7 @@ async function updateCurrentConversationAvailability() {
     }
     if (!connectionStatus.classList.contains('connected')) {
         btnExportCurrent.disabled = true;
-        btnExportCurrent.title = 'Log in to ChatGPT first';
+        btnExportCurrent.title = 'Connect to a ChatGPT tab first';
         return;
     }
 
