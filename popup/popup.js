@@ -84,12 +84,16 @@ function renderJobState(state) {
         waiting: state.error ? 'Waiting to retry the request' : 'Scheduled pause before the next request',
         paused: 'Export paused', complete: 'Export complete', cancelled: 'Export cancelled'
     };
-    jobStatusTitle.textContent = titles[state.status] || 'Export in progress';
+    jobStatusTitle.textContent = state.status === 'complete' && state.excluded
+        ? 'Export finished with exceptions' : titles[state.status] || 'Export in progress';
     const pending = state.listingComplete === false && !['complete', 'cancelled'].includes(state.status) ? '?' : state.pending || 0;
-    jobCounts.textContent = `${state.listed || 0} listed · ${state.projects || 0} projects · ${state.fetched || 0} fetched · ${pending} pending · ${state.saved || 0} saved · ${state.failed || 0} blocking errors`;
+    jobCounts.textContent = `${state.listed || 0} listed · ${state.projects || 0} projects · ${state.fetched || 0} fetched · ${pending} pending · ${state.saved || 0} saved · ${state.excluded || 0} not exported · ${state.failed || 0} blocking errors`;
     jobMessage.textContent = state.error
         ? `${state.activity && state.activity !== state.error ? `${state.activity}: ` : ''}${state.error}`
-        : (state.status === 'complete' ? 'All requested files finished saving.' : state.activity || 'Successful fetches are saved automatically.');
+        : (state.status === 'complete'
+            ? state.excluded ? `${state.saved || 0} conversations saved. ${state.excluded} could not be exported. See ${state.exceptionsReport || 'the exceptions report'}.`
+                : 'All requested files finished saving.'
+            : state.activity || 'Successful fetches are saved automatically.');
     document.getElementById('jobPacing').textContent = state.isRunning || state.canResume
         ? `Request spacing: ${(state.spacingMs || 3000) / 1000} seconds · Backoff stage: ${state.retryLevel || 0}` : '';
     const retryAt = state.status === 'cooldown' || state.status === 'waiting' ? state.resumeAt : state.cooldownUntil;
@@ -116,11 +120,16 @@ function renderJobState(state) {
         const waiting = ['paused', 'cooldown', 'waiting'].includes(state.phase);
         const workPhase = waiting
             ? (state.listingComplete === false ? 'fetching_list'
-                : state.fetched < state.total ? 'fetching_conversations' : 'exporting')
+                : (state.processed ?? state.fetched) < state.total ? 'fetching_conversations' : 'exporting')
             : state.phase;
         const current = workPhase === 'fetching_list' ? state.listed || state.current || 0
-            : waiting ? state.fetched || 0 : state.current || 0;
+            : waiting ? (state.processed ?? state.fetched) || 0 : state.current || 0;
         showProgress(workPhase, current, state.total || 0);
+        if (state.status === 'complete') {
+            progressText.textContent = `${state.saved || 0} conversations saved${state.excluded ? ` · ${state.excluded} not exported` : ''}`;
+        } else if (workPhase === 'fetching_conversations' && state.excluded) {
+            progressText.textContent = `Processing conversations... ${state.processed || 0}/${state.total || 0} · ${state.excluded} not exported`;
+        }
         if (waiting) {
             const countdown = seconds > 0 ? `Resuming in ${seconds} seconds` : 'Resuming…';
             progressText.textContent += state.phase === 'paused' ? ' · Paused' : ` · ${countdown}`;

@@ -170,8 +170,8 @@ test('network failures retry exponentially then pause without skipping the pendi
     assert.equal(f.calls.filter(c => c.message.id === 'conversation-2').length, 0);
 });
 
-test('401/403/404 pause without a retry storm or incomplete success', async () => {
-    for (const status of [401, 403, 404]) {
+test('401 and unknown 403 pause without a retry storm or incomplete success', async () => {
+    for (const status of [401, 403]) {
         const f = fixture(2);
         await f.create();
         f.respond = () => ({ error: `HTTP ${status}`, status });
@@ -374,4 +374,144 @@ test('repairing old spacing preserves an already scheduled retry', async () => {
     await f.store.save(job);
     await f.run();
     assert.equal(f.calls[0].at, deadline);
+});
+
+test('an isolated permission denial becomes a durable exception without inflating fetched counts', async () => {
+    const f = fixture(4);
+    const reports = [];
+    f.options.finishExceptions = async job => { reports.push(structuredClone(job.exceptions)); return { filename: 'exceptions.json' }; };
+    f.restart(); await f.create();
+    f.respond = message => message.id === 'conversation-2'
+        ? { error: 'API Error: 403', status: 403, detail: '{"detail":"Permission denied"}' }
+        : { id: message.id, mapping: {} };
+    assert.equal((await f.run()).totalExported, 3);
+    const job = await f.store.getJob();
+    assert.equal(job.cursor, 4);
+    assert.equal(job.fetched, 3);
+    assert.equal(job.saved, 3);
+    assert.equal(job.exceptions[0].id, 'conversation-2');
+    assert.match(job.exceptions[0].error, /403: Permission denied/);
+    assert.equal(reports.length, 1);
+    assert.deepEqual(f.batches[0].batch.map(c => c.id), ['conversation-1', 'conversation-3', 'conversation-4']);
+    assert.equal(f.calls.filter(c => c.message.id === 'conversation-1').length, 2, 'Confirm access on a known-good conversation');
+    assert.equal(f.calls.filter(c => c.message.id === 'conversation-2').length, 1);
+});
+
+test('a denied first item can verify the next conversation without fetching it twice', async () => {
+    const f = fixture(2);
+    f.options.finishExceptions = async () => ({ filename: 'exceptions.json' });
+    f.restart(); await f.create();
+    f.respond = message => message.id === 'conversation-1'
+        ? { error: '403', status: 403, detail: '{"detail":"Permission denied"}' }
+        : { id: message.id, mapping: {} };
+    assert.equal((await f.run()).totalExported, 1);
+    assert.equal(f.calls.filter(c => c.message.id === 'conversation-2').length, 1);
+});
+
+test('a 429 during access verification survives restart without refetching or dropping the denied item', async () => {
+    const f = fixture(3);
+    const reports = [];
+    f.options.finishExceptions = async job => { reports.push(job.exceptions.length); return { filename: 'exceptions.json' }; };
+    f.restart(); await f.create();
+    let probes = 0;
+    f.respond = message => {
+        if (message.id === 'conversation-2') return { error: '403', status: 403, detail: '{"detail":"Permission denied"}' };
+        if (message.id === 'conversation-1' && ++probes === 2) return { error: '429', status: 429 };
+        return { id: message.id, mapping: {} };
+    };
+    const paused = await f.run();
+    assert.equal(paused.job.status, 'cooldown');
+    assert.equal(paused.job.fetched, 1);
+    assert.equal(paused.job.cursor, 1);
+    assert.equal(paused.job.pendingException.id, 'conversation-2');
+    f.now = paused.job.resumeAt; f.restart();
+    assert.equal((await f.run()).totalExported, 2);
+    assert.equal(f.calls.filter(c => c.message.id === 'conversation-2').length, 1);
+    assert.deepEqual(reports, [1]);
+});
+
+test('loss of access on a known-good conversation pauses without skipping either item', async () => {
+    const f = fixture(3);
+    await f.create();
+    let attempts = 0;
+    f.respond = message => ++attempts === 1 ? { id: message.id, mapping: {} }
+        : { error: '403', status: 403, detail: '{"detail":"Permission denied"}' };
+    const result = await f.run();
+    assert.equal(result.job.status, 'paused');
+    assert.equal(result.job.cursor, 1);
+    assert.equal(result.job.exceptions.length, 0);
+    assert.match(result.job.error, /403: Permission denied/);
+    assert.match(result.job.activity, /conversation-1/);
+    assert.equal(result.job.errorDetail.conversationId, 'conversation-1');
+    assert.equal(f.calls.filter(c => c.message.id === 'conversation-3').length, 0);
+});
+
+test('deleted items are reported, but unknown 403 responses and metadata errors remain blocking', async () => {
+    const f = fixture(2);
+    f.options.finishExceptions = async () => ({ filename: 'exceptions.json' });
+    f.restart(); await f.create();
+    f.respond = () => ({ error: '404', status: 404, detail: '{"detail":"Not found"}' });
+    assert.equal((await f.run()).totalExported, 0);
+    assert.equal((await f.store.getJob()).exceptions.length, 2);
+    const unknown = fixture();
+    await unknown.create();
+    unknown.respond = () => ({ error: '403', status: 403, detail: '<html>Verify you are human</html>' });
+    assert.equal((await unknown.run()).job.status, 'paused');
+});
+
+test('report download failure retains exceptions and payloads and resumes without repeating fetches or successful batches', async () => {
+    const f = fixture(3);
+    f.options.finishExceptions = async () => { throw new Error('FILE_NO_SPACE'); };
+    f.restart(); await f.create();
+    f.respond = message => message.id === 'conversation-2' ? { error: '404', status: 404 }
+        : { id: message.id, mapping: {} };
+    let result = await f.run();
+    assert.equal(result.job.status, 'paused');
+    assert.equal(result.job.saved, 2);
+    assert.equal(result.job.exceptions.length, 1);
+    assert.ok(await f.store.get(result.job, 'conversation:conversation-1'));
+    const calls = f.calls.filter(c => c.message.action === 'getConversation').length;
+    f.options.finishExceptions = async () => ({ filename: 'exceptions.json' });
+    f.restart();
+    result = await f.run();
+    assert.equal(result.totalExported, 2);
+    assert.equal(f.batches.length, 1);
+    assert.equal(f.calls.filter(c => c.message.action === 'getConversation').length, calls);
+    assert.equal((await f.store.getJob()).exceptionsReportSaved, true);
+});
+
+test('legacy fetched checkpoint migrates to the separate cursor without refetching saved payloads', async () => {
+    const f = fixture(3);
+    await f.create();
+    const job = await f.store.getJob();
+    delete job.cursor;
+    job.meta = f.meta; job.fetched = 1; job.total = 3;
+    await f.store.commit(job, 'conversation:conversation-1', { id: 'conversation-1', mapping: {} });
+    assert.equal((await f.run()).totalExported, 3);
+    assert.equal(f.calls.filter(c => c.message.id === 'conversation-1').length, 0);
+});
+
+test('exceptions across output boundaries keep batches aligned after a worker restart', async () => {
+    const f = fixture(205);
+    const omitted = new Set(['conversation-2', 'conversation-102', 'conversation-205']);
+    f.options.finishExceptions = async () => ({ filename: 'exceptions.json' });
+    let saves = 0;
+    f.options.finishBatch = async (batch, job) => {
+        if (++saves === 2) throw new Error('Interrupted output');
+        f.batches.push({ batch, savedBeforeDownload: job.saved });
+        return [];
+    };
+    f.restart(); await f.create();
+    f.respond = message => omitted.has(message.id) ? { error: '404', status: 404 }
+        : { id: message.id, mapping: {} };
+    const interrupted = await f.run();
+    assert.equal(interrupted.job.saved, 100);
+    assert.equal(interrupted.job.fetched, 202);
+    assert.equal(interrupted.job.cursor, 205);
+    f.restart();
+    assert.equal((await f.run()).totalExported, 202);
+    const exported = f.batches.flatMap(b => b.batch.map(c => c.id));
+    assert.equal(new Set(exported).size, 202);
+    assert.deepEqual(exported, f.meta.filter(m => !omitted.has(m.id)).map(m => m.id));
+    assert.deepEqual(f.batches.map(b => b.batch.length), [100, 100, 2]);
 });

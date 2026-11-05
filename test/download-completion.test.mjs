@@ -485,3 +485,28 @@ test('Export All remains available when the Current Chat button has no focused c
     assert.match(availability.reason, /No active ChatGPT conversation/);
     assert.equal((await f.send({ action: 'exportAll', formats: { markdown: true }, limit: 1 })).totalExported, 1);
 });
+
+test('Export All downloads an exceptions report and never acknowledges omitted conversations in history', async () => {
+    const f = await fixture({ count: 4, earlyState: 'complete' });
+    f.responder = message => message.action === 'getConversation' && message.id === f.conversations[1].id
+        ? { error: 'API Error: 403', status: 403, detail: '{"detail":"Permission denied"}' } : null;
+    const result = await f.send({ action: 'exportAll', formats: { markdown: true }, limit: 0 });
+    assert.equal(result.totalExported, 3);
+    assert.equal(result.exceptions, 1);
+    assert.equal(f.history().length, 3);
+    assert.ok(!f.history().includes(f.conversations[1].id));
+    const reportFile = f.generated.find(item => item.mimeType === 'application/json');
+    assert.ok(reportFile);
+    const report = JSON.parse(reportFile.content);
+    assert.equal(report.requested, 4);
+    assert.equal(report.exported, 3);
+    assert.equal(report.notExported, 1);
+    assert.equal(report.exceptions[0].id, f.conversations[1].id);
+    assert.equal(report.exceptions[0].title, f.conversations[1].title);
+    assert.equal(report.exceptions[0].status, 403);
+    assert.match(report.exceptions[0].detail, /Permission denied/);
+    const state = await f.send({ action: 'getExportState' });
+    assert.equal(state.pending, 0);
+    assert.equal(state.excluded, 1);
+    assert.match(state.exceptionsReport, /_exceptions.json$/);
+});

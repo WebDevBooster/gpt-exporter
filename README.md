@@ -1,5 +1,27 @@
 # GPT Exporter
 
+### Inaccessible conversations and exceptions report (2.3.4)
+
+Export All continues past deleted conversations (HTTP 404) and explicit
+`403 Permission denied` responses. Before treating a permission denial as an
+isolated failure, it verifies access to another conversation through the same
+paced request queue. If that check fails, the export pauses with the actual
+server explanation. Unknown 403 responses, authentication failures and listing
+errors remain blocking. Rate limits still trigger the global cooldown.
+
+Inaccessible items have their own durable queue checkpoint and count. They never
+count as fetched or saved and never enter New/Updated history. Saved jobs from
+2.3.0 through 2.3.3 resume from their existing fetched payloads.
+
+The window shows **not exported** alongside the other counts. At completion it
+shows **Export finished with exceptions** and downloads a separate
+`GPT-Exporter_<job>_exceptions.json` report into the selected output folder. The
+report includes each omitted conversation's title, ID, HTTP status, server
+response and timestamp. The job cannot complete until the report finishes
+saving. Interrupted report downloads can be resumed without fetching the
+conversations or saving completed batches again.
+
+
 ### Request pacing recovery (2.3.3)
 
 After a rate limit, the exporter slows its requests. Every 20 consecutive
@@ -54,8 +76,8 @@ Each successful fetch is saved in IndexedDB. Worker shutdown, browser restart,
 network failures and interrupted downloads preserve the fetched conversations.
 The extension continues eligible jobs through Chrome alarms while Chrome is
 running. Alarms can run late, particularly after device sleep. Keep a logged-in
-ChatGPT tab available in the same account and workspace. Persistent failures
-pause the job instead of skipping conversations or reporting incomplete success.
+ChatGPT tab available in the same account and workspace. Persistent request failures pause the job. Inaccessible conversations are handled
+with an explicit exceptions report as described above.
 
 The extension window shows the job status above the settings, with fetched,
 pending and saved counts, a retry time and the current error. Warning and error

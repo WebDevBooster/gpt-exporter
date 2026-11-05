@@ -43,10 +43,12 @@ function stopError(mode) {
 function stateFromJob(job) {
     return job ? {
         isRunning: ['running', 'waiting', 'cooldown'].includes(job.status),
-        phase: job.phase, status: job.status, current: job.phase === 'fetching_list' ? job.listed || 0 : job.fetched, total: job.total,
-        fetched: job.fetched, pending: job.status === 'cancelled' ? 0 : Math.max(0, job.total - job.fetched), saved: job.saved,
+        phase: job.phase, status: job.status, current: job.phase === 'fetching_list' ? job.listed || 0 : (job.cursor ?? job.fetched), total: job.total,
+        fetched: job.fetched, pending: job.status === 'cancelled' ? 0 : Math.max(0, job.total - (job.cursor ?? job.fetched)), saved: job.saved,
         failed: job.status === 'paused' && job.error && !job.error.startsWith('Export paused by user') ? 1 : 0,
-        error: job.error, resumeAt: job.resumeAt, cooldownUntil: job.rate.cooldownUntil,
+        excluded: job.exceptions?.length || 0, processed: job.cursor ?? job.fetched,
+        exceptionsReport: job.exceptionsReportSaved ? job.results.at(-1)?.filename : null,
+        error: job.error, errorDetail: job.errorDetail, resumeAt: job.resumeAt, cooldownUntil: job.rate.cooldownUntil,
         retryLevel: job.rate.level, spacingMs: job.rate.spacingMs,
         events: job.events || [],
         listed: job.listed || 0, projects: job.projects || 0, activity: job.activity,
@@ -60,7 +62,7 @@ function stateFromJob(job) {
 function notifyJob(job) {
     exportState = { ...stateFromJob(job), cancelRequested: exportState.cancelRequested };
     chrome.runtime.sendMessage({ type: 'progress', ...exportState }).catch(() => {});
-    const badge = job.status === 'paused' ? '!' : job.status === 'cooldown' ? '429' : '';
+    const badge = job.status === 'paused' ? '!' : job.status === 'cooldown' ? '429' : job.status === 'complete' && job.exceptions?.length ? '!' : '';
     chrome.action?.setBadgeText({ text: badge }).catch(() => {});
     chrome.action?.setBadgeBackgroundColor({ color: job.status === 'paused' ? '#b91c1c' : '#b45309' }).catch(() => {});
 }
@@ -548,6 +550,16 @@ const runner = createExportRunner({
         check();
         await markConversationsAsExported(batch);
         return results;
+    },
+    async finishExceptions(job, signal) {
+        const filename = `GPT-Exporter_${job.id.slice(0, 8)}_exceptions.json`;
+        const report = {
+            jobId: job.id, generatedAt: new Date().toISOString(),
+            requested: job.total, exported: job.saved, notExported: job.exceptions.length,
+            exceptions: job.exceptions
+        };
+        await downloadFile(filename, JSON.stringify(report, null, 2), 'application/json', job.folder, job, signal);
+        return { filename, type: 'exceptions' };
     }
 });
 

@@ -196,3 +196,17 @@ test('scheduled pause countdown ticks down each second without hiding the listin
         assert.equal(f.get('progressSection').classList.contains('hidden'), false);
     } finally { Date.now = originalNow; }
 });
+
+test('exceptions stay visible in live counts and completion does not claim a full export', async () => {
+    const f = fixture({ ...base, status: 'running', phase: 'fetching_conversations', error: null,
+        fetched: 322, processed: 323, excluded: 1, pending: 1717, total: 2040 });
+    await f.initialize();
+    assert.match(f.get('jobCounts').textContent, /322 fetched.*1717 pending.*1 not exported/);
+    assert.match(f.get('progressText').textContent, /323\/2040.*1 not exported/);
+    f.update({ ...base, isRunning: false, status: 'complete', phase: 'complete', error: null,
+        total: 2040, fetched: 2039, processed: 2040, pending: 0, saved: 2039, excluded: 1,
+        exceptionsReport: 'GPT-Exporter_test_exceptions.json', canCancel: false });
+    assert.equal(f.get('jobStatusTitle').textContent, 'Export finished with exceptions');
+    assert.match(f.get('jobMessage').textContent, /2039 conversations saved.*1 could not be exported.*GPT-Exporter_test_exceptions.json/);
+    assert.match(f.get('progressText').textContent, /2039 conversations saved.*1 not exported/);
+});
