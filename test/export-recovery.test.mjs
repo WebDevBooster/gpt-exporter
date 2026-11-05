@@ -312,3 +312,66 @@ test('listing audit reports no overlap when the returned conversation IDs are di
     assert.equal(audit.inBothLists, 0);
     assert.deepEqual(audit.examples, []);
 });
+
+test('stable traffic gradually restores 48-second pacing to the three-second baseline', async () => {
+    const f = fixture(81);
+    await f.create();
+    const job = await f.store.getJob();
+    Object.assign(job.rate, { spacingMs: 48_000, level: 2, pacingPolicyVersion: 1 });
+    await f.store.save(job);
+    let result;
+    for (let rounds = 0; rounds < 100; rounds++) {
+        result = await f.run();
+        if (result.totalExported !== undefined) break;
+        assert.ok(result.deferred);
+        f.now = result.job.resumeAt;
+        f.restart();
+    }
+    assert.equal(result.totalExported, 81);
+    const saved = await f.store.getJob();
+    assert.equal(saved.rate.spacingMs, 3000);
+    const calls = f.calls.filter(c => c.message.action === 'getConversation');
+    for (const [index, delay] of [[20, 24_000], [40, 12_000], [60, 6000], [80, 3000]]) {
+        assert.equal(calls[index].at - calls[index - 1].at, delay);
+    }
+    assert.equal(saved.events.filter(e => /20 successful requests/.test(e.message)).length, 4);
+});
+
+test('an old job stuck at 48 seconds with reset backoff is repaired once', async () => {
+    const f = fixture();
+    await f.create();
+    const job = await f.store.getJob();
+    Object.assign(job.rate, { spacingMs: 48_000, level: 0, successes: 0 });
+    delete job.rate.pacingPolicyVersion;
+    await f.store.save(job);
+    await f.run();
+    assert.equal((await f.store.getJob()).rate.spacingMs, 24_000);
+    await f.create();
+    await f.run();
+    assert.equal((await f.store.getJob()).rate.spacingMs, 24_000, 'Restarting or creating a job must not repeatedly halve the pacing');
+});
+
+test('pacing recovery never shortens a server cooldown', async () => {
+    const f = fixture();
+    await f.create();
+    const job = await f.store.getJob();
+    Object.assign(job.rate, { spacingMs: 48_000, level: 0, cooldownUntil: f.now + 3600_000 });
+    delete job.rate.pacingPolicyVersion;
+    await f.store.save(job);
+    const result = await f.run();
+    assert.equal(result.job.resumeAt, job.rate.cooldownUntil);
+    assert.equal(result.job.rate.spacingMs, 48_000);
+    assert.equal(f.calls.length, 0);
+});
+
+test('repairing old spacing preserves an already scheduled retry', async () => {
+    const f = fixture();
+    await f.create();
+    const job = await f.store.getJob();
+    const deadline = f.now + 20_000;
+    Object.assign(job.rate, { spacingMs: 48_000, level: 0, nextRequestAt: deadline });
+    delete job.rate.pacingPolicyVersion;
+    await f.store.save(job);
+    await f.run();
+    assert.equal(f.calls[0].at, deadline);
+});

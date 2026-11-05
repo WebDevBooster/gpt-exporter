@@ -88,6 +88,8 @@ function renderJobState(state) {
     const pending = state.listingComplete === false && !['complete', 'cancelled'].includes(state.status) ? '?' : state.pending || 0;
     jobCounts.textContent = `${state.listed || 0} listed · ${state.projects || 0} projects · ${state.fetched || 0} fetched · ${pending} pending · ${state.saved || 0} saved · ${state.failed || 0} blocking errors`;
     jobMessage.textContent = state.error || (state.status === 'complete' ? 'All requested files finished saving.' : state.activity || 'Successful fetches are saved automatically.');
+    document.getElementById('jobPacing').textContent = state.isRunning || state.canResume
+        ? `Request spacing: ${(state.spacingMs || 3000) / 1000} seconds · Backoff stage: ${state.retryLevel || 0}` : '';
     const retryAt = state.status === 'cooldown' || state.status === 'waiting' ? state.resumeAt : state.cooldownUntil;
     const seconds = Math.max(0, Math.ceil(((retryAt || 0) - Date.now()) / 1000));
     jobRetryTime.textContent = retryAt && seconds > 0

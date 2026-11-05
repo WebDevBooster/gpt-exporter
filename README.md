@@ -1,5 +1,18 @@
 # GPT Exporter
 
+### Request pacing recovery (2.3.3)
+
+After a rate limit, the exporter slows its requests. Every 20 consecutive
+successful requests now halves that spacing toward the normal three-second
+baseline. Earlier versions reset the backoff counter but never reduced the
+spacing, which could leave an export permanently waiting 48 or 60 seconds
+between requests. Jobs carrying that old state receive a one-time correction
+when their saved backoff level already confirms stable traffic.
+
+Server cooldowns and Retry-After deadlines remain enforced. The window shows the
+current request spacing so a scheduling wait can be distinguished from throttling.
+
+
 ### Export All progress and Cancel (2.3.2)
 
 **Cancel Export** ends the job, interrupts active fetches and owned downloads,
