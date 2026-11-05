@@ -11,7 +11,9 @@ cooling down or paused. It does not bypass a server's existing rate-limit deadli
 Export All now shows listing progress before conversation contents are fetched:
 conversations found, projects found and the current request. This listing phase
 can take several minutes on a large account. The visible log updates as pages
-arrive, including across worker restarts.
+arrive, including across worker restarts. The progress bar remains visible during
+scheduled pauses, cooldown and manual pause, with the saved count and next
+attempt time.
 
 
 ### Detached window connection (2.3.1)

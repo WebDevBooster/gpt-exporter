@@ -149,3 +149,31 @@ test('missing Current Chat availability cannot add a false error to the Export A
     assert.equal(f.get('btnExportAll').disabled, false);
     assert.ok(f.get('logOutput').children.every(e => e.className !== 'log-entry error'));
 });
+
+test('listing progress stays visible through scheduled pauses, cooldown and resume', async () => {
+    const listing = { ...base, status: 'running', phase: 'fetching_list', listed: 112,
+        current: 112, fetched: 0, total: 0, error: null, listingComplete: false };
+    const f = fixture(listing);
+    await f.initialize();
+    const width = f.get('progressFill').style.width;
+    for (const phase of ['waiting', 'cooldown', 'paused']) {
+        f.update({ ...listing, phase, status: phase, current: 0 });
+        assert.equal(f.get('progressSection').classList.contains('hidden'), false, `The bar must remain visible during ${phase}`);
+        assert.match(f.get('progressText').textContent, /112 found/);
+        assert.equal(f.get('progressFill').style.width, width);
+    }
+    assert.match(f.get('progressText').textContent, /Paused/);
+    f.update({ ...listing, phase: 'waiting', status: 'waiting' });
+    assert.match(f.get('progressText').textContent, /Scheduled pause until/);
+    f.update({ ...listing, listed: 140, current: 140 });
+    assert.match(f.get('progressText').textContent, /140 found/);
+    assert.equal(f.get('progressSection').classList.contains('hidden'), false);
+});
+
+test('reopening during a scheduled listing pause restores the bar and saved count', async () => {
+    const f = fixture({ ...base, status: 'waiting', phase: 'waiting', listed: 1002,
+        current: 0, fetched: 0, total: 0, error: null, listingComplete: false });
+    await f.initialize();
+    assert.equal(f.get('progressSection').classList.contains('hidden'), false);
+    assert.match(f.get('progressText').textContent, /1002 found.*Scheduled pause until/);
+});

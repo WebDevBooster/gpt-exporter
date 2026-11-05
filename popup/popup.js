@@ -49,7 +49,8 @@ function renderJobState(state) {
     }
     const titles = {
         running: 'Export in progress', cooldown: 'ChatGPT rate limit: export cooling down',
-        waiting: 'Export waiting to continue', paused: 'Export paused', complete: 'Export complete', cancelled: 'Export cancelled'
+        waiting: state.error ? 'Waiting to retry the request' : 'Scheduled pause before the next request',
+        paused: 'Export paused', complete: 'Export complete', cancelled: 'Export cancelled'
     };
     jobStatusTitle.textContent = titles[state.status] || 'Export in progress';
     const pending = state.listingComplete === false && !['complete', 'cancelled'].includes(state.status) ? '?' : state.pending || 0;
@@ -75,8 +76,22 @@ function renderJobState(state) {
             updateCurrentConversationAvailability();
         }
     }
-    if (state.phase && !['paused', 'cooldown', 'waiting', 'cancelled'].includes(state.phase)) {
-        showProgress(state.phase, state.current || 0, state.total || 0);
+    if (state.phase && state.phase !== 'cancelled') {
+        const waiting = ['paused', 'cooldown', 'waiting'].includes(state.phase);
+        const workPhase = waiting
+            ? (state.listingComplete === false ? 'fetching_list'
+                : state.fetched < state.total ? 'fetching_conversations' : 'exporting')
+            : state.phase;
+        const current = workPhase === 'fetching_list' ? state.listed || state.current || 0
+            : waiting ? state.fetched || 0 : state.current || 0;
+        showProgress(workPhase, current, state.total || 0);
+        if (waiting) {
+            const reason = state.phase === 'paused' ? 'Paused' : state.phase === 'cooldown'
+                ? 'Rate limit cooldown' : state.error ? 'Waiting to retry' : 'Scheduled pause';
+            const next = state.phase !== 'paused' && state.resumeAt
+                ? ` until ${new Date(state.resumeAt).toLocaleTimeString()}` : '';
+            progressText.textContent += ` · ${reason}${next}`;
+        }
     } else hideProgress();
     const logKey = `${state.status}:${state.phase}:${state.error || ''}:${state.retryLevel || 0}:${Math.floor((state.fetched || 0) / 25)}:${state.listed || 0}:${state.activity || ''}`;
     if (state.phase && logKey !== lastLogKey) {
