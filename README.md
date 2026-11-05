@@ -1,5 +1,32 @@
 # GPT Exporter
 
+### End & Export and a 6.1-second minimum (2.4.0)
+
+Request spacing never falls below **6.1 seconds**, including after rate-limit
+recovery. Existing saved jobs and inherited rate state receive the same floor
+without shortening server cooldowns or Retry-After deadlines.
+
+**End & Export** stops further fetching and saves the conversations already
+fetched, using the job's original formats and output folder. It works while
+running, paused or cooling down and needs no further ChatGPT requests. The
+button appears once fetched conversations are available. Pause, Resume and
+Cancel remain separate controls.
+
+After the files finish saving, the window shows **Partial export saved** with
+its saved and remaining counts. **Export Remaining** starts a new job from the
+saved list, omitting every conversation whose files successfully saved. It also
+retries previously inaccessible conversations. The remaining list survives
+browser restarts and extension updates. Resuming respects any outstanding rate
+limit and requires the original ChatGPT account and workspace.
+
+If a partial download fails, **Retry Saving** retries the output from the saved
+payloads without fetching more conversations. Successfully saved conversations
+enter New/Updated history, so **Export New/Updated** can also discover the account
+again and skip unchanged conversations already exported. **Export All** still
+explicitly exports the whole selected list. Starting another job replaces the
+previous job's saved remaining list; downloaded files and export history remain.
+
+
 ### Inaccessible conversations and exceptions report (2.3.4)
 
 Export All continues past deleted conversations (HTTP 404) and explicit

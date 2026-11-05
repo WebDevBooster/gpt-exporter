@@ -35,8 +35,9 @@ function checkCancellation() {
 function stopError(mode) {
     return Object.assign(new Error(mode === 'cancel'
         ? 'Export cancelled by user (USER_CANCELED). You can start a new export.'
-        : 'Export paused by user. Progress is saved.'), {
-        code: mode === 'cancel' ? 'EXPORT_CANCELLED' : 'EXPORT_PAUSED'
+        : mode === 'end' ? 'Ending fetches and exporting saved conversations.'
+            : 'Export paused by user. Progress is saved.'), {
+        code: mode === 'cancel' ? 'EXPORT_CANCELLED' : mode === 'end' ? 'EXPORT_END' : 'EXPORT_PAUSED'
     });
 }
 
@@ -54,8 +55,10 @@ function stateFromJob(job) {
         listed: job.listed || 0, projects: job.projects || 0, activity: job.activity,
         listingComplete: !!job.metaSaved,
         requests: job.requests || 0, lastSuccessAt: job.lastSuccessAt,
-        canResume: job.status === 'paused', canCancel: !['complete', 'cancelled'].includes(job.status),
-        canDiscard: !['complete', 'cancelled'].includes(job.status)
+        partial: job.status === 'partial', finishingEarly: !!job.finishEarly, remaining: job.total - job.saved,
+        canEnd: !job.finishEarly && !['complete', 'partial', 'cancelled'].includes(job.status) && job.fetched > 0,
+        canResume: job.status === 'paused' || job.status === 'partial', canCancel: !['complete', 'partial', 'cancelled'].includes(job.status),
+        canDiscard: !['complete', 'partial', 'cancelled'].includes(job.status)
     } : { isRunning: false, phase: null };
 }
 
@@ -606,6 +609,15 @@ async function resumeExport() {
     try {
         const job = await jobStore.getJob();
         if (!job || ['complete', 'cancelled'].includes(job.status)) throw new Error('No unfinished export to resume');
+        if (job.status === 'partial') {
+            const excluded = new Set(job.exceptions.map(item => item.id));
+            const savedIds = new Set(job.meta.filter(item => !excluded.has(item.id)).slice(0, job.saved).map(item => item.id));
+            const meta = job.meta.filter(item => !savedIds.has(item.id));
+            const remaining = await runner.create({ kind: 'remaining', formats: job.formats,
+                folder: job.folder, limit: 0, meta, accountKey: job.accountKey,
+                listed: meta.length, projects: job.projects });
+            return await execute(remaining);
+        }
         job.rate.consecutive429 = 0;
         job.transient = null;
         return await execute(job);
@@ -614,7 +626,7 @@ async function resumeExport() {
 
 async function stopExport(mode) {
     if (pausing) throw new Error('The export is already stopping.');
-    if (controlBusy && !activeRun) throw new Error('The export is starting. Try Pause again shortly.');
+    if (controlBusy && !activeRun) throw new Error('The export is starting. Try again shortly.');
     pausing = true;
     try {
         stopMode = mode;
@@ -628,7 +640,7 @@ async function stopExport(mode) {
         await chrome.alarms.clear(JOB_ALARM);
         if (activeRun) await activeRun;
         const job = await jobStore.getJob();
-        if (!job || job.status === 'complete') return { success: false, error: 'No unfinished export' };
+        if (!job || ['complete', 'partial'].includes(job.status)) return { success: false, error: 'No unfinished export' };
         for (const receipt of await jobStore.getDownloads(job)) {
             try {
                 const items = await chrome.downloads.search({ id: receipt.id });
@@ -636,8 +648,9 @@ async function stopExport(mode) {
             } catch { /* A completed or removed download needs no cancellation. */ }
         }
         job.status = job.phase = mode === 'cancel' ? 'cancelled' : 'paused';
-        job.error = mode === 'cancel' ? null : stopError(mode).message;
-        job.activity = mode === 'cancel' ? 'Export cancelled. You can start a new export.' : job.error;
+        if (mode === 'end') job.finishEarly = true;
+        job.error = mode === 'cancel' || mode === 'end' ? null : stopError(mode).message;
+        job.activity = mode === 'cancel' ? 'Export cancelled. You can start a new export.' : stopError(mode).message;
         job.resumeAt = null;
         if (job.events?.at(-1)?.message !== stopError(mode).message) recordJobEvent(job, stopError(mode).message);
         await jobStore.save(job);
@@ -708,6 +721,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             case 'resumeExport': return resumeExport();
             case 'cancelExport': return stopExport('cancel');
             case 'pauseExport': return stopExport('pause');
+            case 'endAndExport': {
+                const job = await jobStore.getJob(false);
+                if (!job || !stateFromJob(job).canEnd) throw new Error('No fetched conversations available to export.');
+                const stopped = await stopExport('end');
+                if (!stopped.success) return stopped;
+                return resumeExport();
+            }
             case 'discardExport':
                 if (activeRun || controlBusy || pausing) throw new Error('Pause the export before discarding it.');
                 controlBusy = true;

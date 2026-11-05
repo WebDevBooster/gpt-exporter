@@ -544,6 +544,74 @@ test('upgrading a saved three-second job repairs its next slot and preserves a l
     assert.equal(f.calls.length, before);
 });
 
+test('End and Export saves only durable fetched payloads during cooldown without making any API request', async () => {
+    const f = fixture(5);
+    await f.create();
+    f.respond = m => m.id === 'conversation-3' ? { error: '429', status: 429 }
+        : { id: m.id, mapping: {} };
+    const limited = await f.run();
+    const calls = f.calls.length;
+    const job = await f.store.getJob();
+    job.finishEarly = true;
+    await f.store.save(job);
+    const result = await f.run();
+    assert.equal(result.partial, true);
+    assert.equal(result.totalExported, 2);
+    assert.equal(result.remaining, 3);
+    assert.equal(f.calls.length, calls);
+    assert.equal((await f.store.getJob()).rate.cooldownUntil, limited.job.rate.cooldownUntil);
+    assert.deepEqual(f.batches[0].batch.map(c => c.id), ['conversation-1', 'conversation-2']);
+});
+
+test('partial output survives a failed download and worker restart without fetching pending conversations', async () => {
+    const f = fixture(4);
+    await f.create();
+    f.respond = m => m.id === 'conversation-3' ? { error: '429', status: 429 }
+        : { id: m.id, mapping: {} };
+    await f.run();
+    const job = await f.store.getJob(); job.finishEarly = true;
+    await f.store.save(job);
+    f.options.finishBatch = async () => { throw new Error('FILE_NO_SPACE'); };
+    f.restart();
+    assert.equal((await f.run()).job.status, 'paused');
+    assert.equal((await f.store.getJob()).saved, 0);
+    const before = f.calls.length;
+    f.options.finishBatch = async () => [];
+    f.restart();
+    assert.equal((await f.run()).partial, true);
+    assert.equal(f.calls.length, before);
+    assert.equal((await f.store.getJob()).saved, 2);
+});
+
+test('a large partial export checkpoints each batch and survives alarm restarts without consulting ChatGPT', async () => {
+    const f = fixture(350);
+    const job = await f.create();
+    job.meta = f.meta; job.total = 350; job.fetched = job.cursor = 250;
+    job.finishEarly = true;
+    job.rate.cooldownUntil = f.now + 3600_000;
+    for (const meta of f.meta.slice(0, 250)) {
+        await f.store.commit(job, `conversation:${meta.id}`, { id: meta.id, mapping: {} });
+    }
+    f.options.finishBatch = async (batch, saved) => {
+        f.batches.push({ batch, savedBeforeDownload: saved.saved });
+        f.now += 60_000;
+        return [];
+    };
+    f.restart();
+    let result;
+    for (let round = 0; round < 5; round++) {
+        result = await f.run();
+        if (result.partial) break;
+        assert.equal(result.job.finishEarly, true);
+        f.now = result.job.resumeAt;
+        f.restart();
+    }
+    assert.equal(result.partial, true);
+    assert.equal(result.totalExported, 250);
+    assert.equal(result.remaining, 100);
+    assert.equal(f.calls.length, 0);
+    assert.deepEqual(f.batches.map(b => b.batch.length), [100, 100, 50]);
+});
 
 test('a new job inherits the 6.1-second floor without bypassing an old reservation or cooldown', async () => {
     const f = fixture();

@@ -210,3 +210,40 @@ test('exceptions stay visible in live counts and completion does not claim a ful
     assert.match(f.get('jobMessage').textContent, /2039 conversations saved.*1 could not be exported.*GPT-Exporter_test_exceptions.json/);
     assert.match(f.get('progressText').textContent, /2039 conversations saved.*1 not exported/);
 });
+
+test('End and Export is available while paused or cooling down once fetched data exists', async () => {
+    const f = fixture({ ...base, canEnd: true, spacingMs: 6100 });
+    await f.initialize();
+    assert.equal(f.get('btnEndExport').classList.contains('hidden'), false);
+    assert.equal(f.get('btnEndExport').disabled, false);
+    assert.match(f.get('jobPacing').textContent, /6\.1 seconds/);
+    f.update({ ...base, canEnd: true, status: 'paused', phase: 'paused', isRunning: false });
+    assert.equal(f.get('btnEndExport').classList.contains('hidden'), false);
+    f.update({ ...base, canEnd: false, fetched: 0 });
+    assert.equal(f.get('btnEndExport').classList.contains('hidden'), true);
+});
+
+test('partial completion offers Export Remaining and identifies how many conversations were not saved', async () => {
+    const f = fixture({ ...base, status: 'partial', phase: 'partial', isRunning: false,
+        partial: true, finishingEarly: true, error: null, fetched: 216, saved: 216,
+        remaining: 2299, canResume: true, canEnd: false, canCancel: false });
+    await f.initialize();
+    assert.equal(f.get('jobStatusTitle').textContent, 'Partial export saved');
+    assert.equal(f.get('btnResume').textContent, 'Export Remaining');
+    assert.equal(f.get('btnResume').classList.contains('hidden'), false);
+    assert.equal(f.get('btnEndExport').classList.contains('hidden'), true);
+    assert.match(f.get('jobMessage').textContent, /216 conversations saved.*2299 still not exported.*Export Remaining/);
+    assert.equal(f.get('jobRetryTime').textContent, '', 'Completing a partial export must not imply automatic fetching will resume');
+    assert.equal(f.get('btnExportNew').disabled, false);
+    assert.match(f.get('progressText').textContent, /216 conversations saved.*2299 still not exported/);
+});
+
+test('a failed partial save offers Retry Saving independently of a server cooldown', async () => {
+    const f = fixture({ ...base, status: 'paused', phase: 'paused', isRunning: false,
+        finishingEarly: true, error: 'FILE_FAILED', canResume: true, canEnd: false });
+    await f.initialize();
+    assert.equal(f.get('btnResume').textContent, 'Retry Saving');
+    assert.equal(f.get('jobRetryTime').textContent, '');
+    assert.match(f.get('progressText').textContent, /Preparing files/);
+    assert.match(f.get('jobMessage').textContent, /FILE_FAILED/);
+});

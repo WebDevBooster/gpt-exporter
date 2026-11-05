@@ -120,7 +120,7 @@ async function fixture({ count = 1, startError, earlyState } = {}) {
         const result = new Promise(resolve => {
             if (handler(message, sender, resolve) !== true) resolve(undefined);
         });
-        if (message.action.startsWith('export') || message.action === 'resumeExport') exports.push(result);
+        if (message.action.startsWith('export') || ['resumeExport', 'endAndExport'].includes(message.action)) exports.push(result);
         return result;
     }
     const history = () => Object.keys(storage.gpt_exporter_sync_data?.exportedConversations || {});
@@ -509,4 +509,137 @@ test('Export All downloads an exceptions report and never acknowledges omitted c
     assert.equal(state.pending, 0);
     assert.equal(state.excluded, 1);
     assert.match(state.exceptionsReport, /_exceptions.json$/);
+});
+
+test('End and Export during cooldown saves fetched conversations then Export Remaining skips them after restart', async () => {
+    const f = await fixture({ count: 6, earlyState: 'complete' });
+    let limited = true;
+    f.responder = msg => msg.action === 'getConversation' && msg.id === f.conversations[2].id && limited
+        ? { error: '429', status: 429, retryAfter: '120' } : null;
+    await f.send({ action: 'exportAll', formats: { markdown: true }, limit: 0 });
+    const cooldown = await f.send({ action: 'getExportState' });
+    assert.equal(cooldown.fetched, 2);
+    assert.equal(cooldown.canEnd, true);
+    const requests = f.requests.length;
+    const partial = await f.send({ action: 'endAndExport' });
+    assert.equal(partial.partial, true);
+    assert.equal(partial.totalExported, 2);
+    assert.equal(partial.remaining, 4);
+    assert.equal(f.requests.length, requests, 'Saving during cooldown must work without session or conversation requests');
+    assert.deepEqual(f.history().sort(), f.conversations.slice(0, 2).map(c => c.id).sort());
+    const saved = await f.send({ action: 'getExportState' });
+    assert.equal(saved.status, 'partial');
+    assert.equal(saved.canResume, true);
+    assert.equal(saved.canEnd, false);
+    assert.equal(f.alarms.size, 0);
+    await f.restart(); limited = false;
+    await f.send({ action: 'resumeExport' });
+    const waiting = await f.send({ action: 'getExportState' });
+    assert.equal(waiting.total, 4);
+    assert.equal(waiting.resumeAt, cooldown.resumeAt);
+    assert.equal(f.requests.length, requests);
+    f.advanceTo(waiting.resumeAt);
+    await f.alarm();
+    assert.equal((await f.send({ action: 'getExportState' })).status, 'complete');
+    assert.equal(f.history().length, 6);
+    for (const conv of f.conversations.slice(0, 2)) {
+        assert.equal(f.requests.filter(m => m.action === 'getConversation' && m.id === conv.id).length, 1);
+    }
+});
+
+test('End and Export interrupts a hung fetch without committing its late result', { timeout: 5000 }, async () => {
+    const f = await fixture({ count: 5, earlyState: 'complete' });
+    let release;
+    f.responder = msg => msg.action === 'getConversation' && msg.id === f.conversations[2].id
+        ? new Promise(resolve => { release = resolve; }) : null;
+    const active = f.send({ action: 'exportAll', formats: { markdown: true }, limit: 0 });
+    await until(() => !!release);
+    const partial = await f.send({ action: 'endAndExport' });
+    assert.equal(partial.totalExported, 2);
+    assert.equal((await active).ending, true);
+    assert.equal(f.history().length, 2);
+    release(structuredClone(f.conversations[2]));
+    await tick();
+    const state = await f.send({ action: 'getExportState' });
+    assert.equal(state.status, 'partial');
+    assert.equal(state.saved, 2);
+    assert.equal(state.remaining, 3);
+    assert.equal(f.requests.filter(m => m.action === 'getConversation' && m.id === f.conversations[3].id).length, 0);
+});
+
+test('failed partial download does not enter history and Retry Saving needs no ChatGPT connection', async () => {
+    const f = await fixture({ count: 4 });
+    f.responder = msg => msg.action === 'getConversation' && msg.id === f.conversations[2].id
+        ? { error: '429', status: 429 } : null;
+    await f.send({ action: 'exportAll', formats: { markdown: true }, limit: 0 });
+    const partial = f.send({ action: 'endAndExport' });
+    await until(() => f.downloads.length === 1);
+    assert.deepEqual(f.history(), []);
+    f.finish(1, 'interrupted', 'FILE_FAILED');
+    assert.match((await partial).error, /FILE_FAILED/);
+    const state = await f.send({ action: 'getExportState' });
+    assert.equal(state.status, 'paused');
+    assert.equal(state.finishingEarly, true);
+    assert.equal(state.saved, 0);
+    assert.deepEqual(f.history(), []);
+    await f.restart();
+    f.responder = () => { throw new Error('No ChatGPT connection'); };
+    const requests = f.requests.length;
+    const retry = f.send({ action: 'resumeExport' });
+    await until(() => f.downloads.length === 2);
+    f.finish(2, 'complete');
+    await until(() => f.downloads.length === 3);
+    f.finish(3, 'complete');
+    assert.equal((await retry).partial, true);
+    assert.equal(f.requests.length, requests);
+    assert.equal(f.history().length, 2);
+});
+
+test('End and Export from manual pause retains exceptions and Export Remaining retries every unsaved ID', async () => {
+    const f = await fixture({ count: 5, earlyState: 'complete' });
+    f.responder = msg => msg.action === 'getConversation' && msg.id === f.conversations[1].id
+        ? { error: '404', status: 404 }
+        : msg.action === 'getConversation' && msg.id === f.conversations[3].id ? { error: '429', status: 429 } : null;
+    await f.send({ action: 'exportAll', formats: { markdown: true }, limit: 0 });
+    await f.send({ action: 'pauseExport' });
+    const before = await f.send({ action: 'getExportState' });
+    assert.equal(before.canEnd, true);
+    const partial = await f.send({ action: 'endAndExport' });
+    assert.equal(partial.totalExported, 2);
+    assert.equal(partial.exceptions, 1);
+    assert.equal(partial.remaining, 3);
+    const requests = f.requests.length;
+    f.responder = null;
+    await f.send({ action: 'resumeExport' });
+    let state = await f.send({ action: 'getExportState' });
+    assert.equal(state.total, 3);
+    for (let round = 0; round < 10 && state.status !== 'complete'; round++) {
+        f.advanceTo(state.resumeAt); await f.alarm();
+        state = await f.send({ action: 'getExportState' });
+    }
+    assert.equal(state.status, 'complete');
+    const newlyFetched = f.requests.slice(requests).filter(m => m.action === 'getConversation').map(m => m.id);
+    assert.deepEqual(newlyFetched, [f.conversations[1].id, f.conversations[3].id, f.conversations[4].id]);
+    assert.equal(f.history().length, 5);
+});
+
+test('New and Updated skips conversations saved by End and Export', async () => {
+    const f = await fixture({ count: 5, earlyState: 'complete' });
+    f.responder = msg => msg.action === 'getConversation' && msg.id === f.conversations[2].id
+        ? { error: '429', status: 429 } : null;
+    await f.send({ action: 'exportAll', formats: { markdown: true }, limit: 0 });
+    await f.send({ action: 'endAndExport' });
+    const requests = f.requests.length;
+    const state = await f.send({ action: 'getExportState' });
+    f.advanceTo(state.cooldownUntil);
+    f.responder = null;
+    await f.send({ action: 'exportNewUpdated', formats: { markdown: true }, limit: 0 });
+    let next = await f.send({ action: 'getExportState' });
+    for (let round = 0; round < 20 && next.status !== 'complete'; round++) {
+        f.advanceTo(next.resumeAt); await f.alarm();
+        next = await f.send({ action: 'getExportState' });
+    }
+    assert.equal(next.status, 'complete');
+    assert.deepEqual(f.requests.slice(requests).filter(m => m.action === 'getConversation').map(m => m.id),
+        f.conversations.slice(2).map(c => c.id));
 });

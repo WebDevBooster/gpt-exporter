@@ -31,6 +31,7 @@ const jobMessage = document.getElementById('jobMessage');
 const jobRetryTime = document.getElementById('jobRetryTime');
 const btnResume = document.getElementById('btnResume');
 const btnPauseProcess = document.getElementById('btnPauseProcess');
+const btnEndExport = document.getElementById('btnEndExport');
 let lastJobState = null;
 let lastLogKey = '';
 const loggedEvents = new Set();
@@ -47,6 +48,7 @@ async function showListingAudit(state) {
     }
     if (auditedTotal === state.total) return;
     auditedTotal = state.total;
+    panel.classList.add('hidden');
     const generation = ++auditGeneration;
     try {
         const { createExportStore } = await import('../lib/export-store.js');
@@ -70,7 +72,7 @@ function renderJobState(state) {
     const previousStatus = lastJobState?.status;
     lastJobState = state;
     showListingAudit(state);
-    const unfinished = state.phase && !['complete', 'cancelled'].includes(state.status);
+    const unfinished = state.phase && !['complete', 'partial', 'cancelled'].includes(state.status);
     jobStatus.classList.toggle('hidden', !state.phase);
     jobStatus.dataset.status = state.status || '';
     for (const event of state.events || []) {
@@ -82,26 +84,33 @@ function renderJobState(state) {
     const titles = {
         running: 'Export in progress', cooldown: 'ChatGPT rate limit: export cooling down',
         waiting: state.error ? 'Waiting to retry the request' : 'Scheduled pause before the next request',
-        paused: 'Export paused', complete: 'Export complete', cancelled: 'Export cancelled'
+        paused: 'Export paused', partial: 'Partial export saved', complete: 'Export complete', cancelled: 'Export cancelled'
     };
     jobStatusTitle.textContent = state.status === 'complete' && state.excluded
         ? 'Export finished with exceptions' : titles[state.status] || 'Export in progress';
-    const pending = state.listingComplete === false && !['complete', 'cancelled'].includes(state.status) ? '?' : state.pending || 0;
+    const pending = state.listingComplete === false && !['complete', 'partial', 'cancelled'].includes(state.status) ? '?' : state.pending || 0;
     jobCounts.textContent = `${state.listed || 0} listed · ${state.projects || 0} projects · ${state.fetched || 0} fetched · ${pending} pending · ${state.saved || 0} saved · ${state.excluded || 0} not exported · ${state.failed || 0} blocking errors`;
     jobMessage.textContent = state.error
         ? `${state.activity && state.activity !== state.error ? `${state.activity}: ` : ''}${state.error}`
         : (state.status === 'complete'
             ? state.excluded ? `${state.saved || 0} conversations saved. ${state.excluded} could not be exported. See ${state.exceptionsReport || 'the exceptions report'}.`
                 : 'All requested files finished saving.'
-            : state.activity || 'Successful fetches are saved automatically.');
+            : state.partial
+                ? `${state.saved || 0} conversations saved. ${state.remaining || 0} still not exported. Choose Export Remaining to continue later.${state.excluded ? ` See ${state.exceptionsReport || 'the exceptions report'} for inaccessible conversations.` : ''}`
+                : state.finishingEarly ? 'Saving conversations fetched so far. No more conversations will be fetched.'
+                : state.activity || 'Successful fetches are saved automatically.');
     document.getElementById('jobPacing').textContent = state.isRunning || state.canResume
         ? `Request spacing: ${(state.spacingMs || 6100) / 1000} seconds · Backoff stage: ${state.retryLevel || 0}` : '';
-    const retryAt = state.status === 'cooldown' || state.status === 'waiting' ? state.resumeAt : state.cooldownUntil;
+    const retryAt = (state.finishingEarly && state.status === 'paused') || state.partial
+        ? null : ['cooldown', 'waiting'].includes(state.status) ? state.resumeAt : state.cooldownUntil;
     const seconds = Math.max(0, Math.ceil(((retryAt || 0) - Date.now()) / 1000));
     jobRetryTime.textContent = retryAt && seconds > 0
         ? `${state.status === 'paused' ? 'Resume available' : 'Resuming'} in ${seconds} seconds`
         : state.isRunning && state.status !== 'running' ? 'Resuming…' : '';
     btnResume.classList.toggle('hidden', !state.canResume);
+    btnResume.textContent = state.partial ? 'Export Remaining' : state.finishingEarly ? 'Retry Saving' : 'Resume Export';
+    btnEndExport.classList.toggle('hidden', !state.canEnd);
+    btnEndExport.disabled = !state.canEnd;
     btnCancelProcess.classList.toggle('hidden', !state.canCancel);
     btnCancelProcess.disabled = !state.canCancel;
     btnPauseProcess.classList.toggle('hidden', !state.isRunning);
@@ -111,22 +120,22 @@ function renderJobState(state) {
     } else if (connectionStatus.classList.contains('connected')) {
         btnExportNew.disabled = btnExportAll.disabled = false;
         // The availability check additionally validates the focused chat tab.
-        if (['complete', 'cancelled'].includes(state.status) && previousStatus !== state.status) {
-            if (state.status === 'complete') updateStats();
+        if (['complete', 'partial', 'cancelled'].includes(state.status) && previousStatus !== state.status) {
+            if (['complete', 'partial'].includes(state.status)) updateStats();
             updateCurrentConversationAvailability();
         }
     }
     if (state.phase && state.phase !== 'cancelled') {
         const waiting = ['paused', 'cooldown', 'waiting'].includes(state.phase);
         const workPhase = waiting
-            ? (state.listingComplete === false ? 'fetching_list'
+            ? (state.finishingEarly ? 'exporting' : state.listingComplete === false ? 'fetching_list'
                 : (state.processed ?? state.fetched) < state.total ? 'fetching_conversations' : 'exporting')
             : state.phase;
         const current = workPhase === 'fetching_list' ? state.listed || state.current || 0
             : waiting ? (state.processed ?? state.fetched) || 0 : state.current || 0;
         showProgress(workPhase, current, state.total || 0);
-        if (state.status === 'complete') {
-            progressText.textContent = `${state.saved || 0} conversations saved${state.excluded ? ` · ${state.excluded} not exported` : ''}`;
+        if (state.status === 'complete' || state.partial) {
+            progressText.textContent = `${state.saved || 0} conversations saved${state.partial ? ` · ${state.remaining || 0} still not exported` : state.excluded ? ` · ${state.excluded} not exported` : ''}`;
         } else if (workPhase === 'fetching_conversations' && state.excluded) {
             progressText.textContent = `Processing conversations... ${state.processed || 0}/${state.total || 0} · ${state.excluded} not exported`;
         }
@@ -305,7 +314,7 @@ async function updateConnectionStatus() {
  * Enable current-chat export only when the active tab is a concrete conversation
  */
 async function updateCurrentConversationAvailability() {
-    if (lastJobState?.phase && !['complete', 'cancelled'].includes(lastJobState.status)) {
+    if (lastJobState?.phase && !['complete', 'partial', 'cancelled'].includes(lastJobState.status)) {
         btnExportCurrent.disabled = true;
         return;
     }
@@ -381,6 +390,7 @@ function showProgress(phase, current, total) {
             phaseText = `Creating ZIP archive... ${total} files`;
             percent = 90;
             break;
+        case 'partial':
         case 'complete':
             phaseText = `Export complete! ${total} files`;
             percent = 100;
@@ -516,6 +526,13 @@ chrome.runtime.onMessage.addListener(message => {
 
 btnResume.addEventListener('click', handleResume);
 btnPauseProcess.addEventListener('click', handlePause);
+btnEndExport.addEventListener('click', async () => {
+    btnEndExport.disabled = true;
+    try {
+        const result = await sendMessage({ action: 'endAndExport' });
+        if (result?.error) log(result.error, 'error');
+    } finally { await checkExportState(); }
+});
 
 // Auto-save settings on change
 downloadFolder.addEventListener('change', saveSettings);
