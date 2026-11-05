@@ -59,8 +59,8 @@ function renderJobState(state) {
     const retryAt = state.status === 'cooldown' || state.status === 'waiting' ? state.resumeAt : state.cooldownUntil;
     const seconds = Math.max(0, Math.ceil(((retryAt || 0) - Date.now()) / 1000));
     jobRetryTime.textContent = retryAt && seconds > 0
-        ? `${state.status === 'paused' ? 'Resume no earlier than' : 'Continues at or after'} ${new Date(retryAt).toLocaleTimeString()} (${seconds}s remaining)`
-        : state.isRunning && state.status !== 'running' ? 'Waiting for Chrome to resume the job.' : '';
+        ? `${state.status === 'paused' ? 'Resume available' : 'Resuming'} in ${seconds} seconds`
+        : state.isRunning && state.status !== 'running' ? 'Resuming…' : '';
     btnResume.classList.toggle('hidden', !state.canResume);
     btnCancelProcess.classList.toggle('hidden', !state.canCancel);
     btnCancelProcess.disabled = !state.canCancel;
@@ -86,11 +86,8 @@ function renderJobState(state) {
             : waiting ? state.fetched || 0 : state.current || 0;
         showProgress(workPhase, current, state.total || 0);
         if (waiting) {
-            const reason = state.phase === 'paused' ? 'Paused' : state.phase === 'cooldown'
-                ? 'Rate limit cooldown' : state.error ? 'Waiting to retry' : 'Scheduled pause';
-            const next = state.phase !== 'paused' && state.resumeAt
-                ? ` until ${new Date(state.resumeAt).toLocaleTimeString()}` : '';
-            progressText.textContent += ` · ${reason}${next}`;
+            const countdown = seconds > 0 ? `Resuming in ${seconds} seconds` : 'Resuming…';
+            progressText.textContent += state.phase === 'paused' ? ' · Paused' : ` · ${countdown}`;
         }
     } else hideProgress();
     const logKey = `${state.status}:${state.phase}:${state.error || ''}:${state.retryLevel || 0}:${Math.floor((state.fetched || 0) / 25)}:${state.listed || 0}:${state.activity || ''}`;

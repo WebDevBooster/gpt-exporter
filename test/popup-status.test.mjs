@@ -62,7 +62,7 @@ test('reopening the normal popup restores a visible throttle warning, counts and
     assert.equal(f.get('jobStatus').dataset.status, 'cooldown');
     assert.match(f.get('jobStatusTitle').textContent, /rate limit/);
     assert.match(f.get('jobCounts').textContent, /216 fetched.*2299 pending.*0 saved/);
-    assert.match(f.get('jobRetryTime').textContent, /Continues at or after/);
+    assert.match(f.get('jobRetryTime').textContent, /Resuming in \d+ seconds/);
     assert.equal(f.get('btnExportAll').disabled, true);
     assert.ok(f.get('logOutput').children.some(entry => /rate limit/.test(entry.textContent)));
 });
@@ -164,7 +164,7 @@ test('listing progress stays visible through scheduled pauses, cooldown and resu
     }
     assert.match(f.get('progressText').textContent, /Paused/);
     f.update({ ...listing, phase: 'waiting', status: 'waiting' });
-    assert.match(f.get('progressText').textContent, /Scheduled pause until/);
+    assert.match(f.get('progressText').textContent, /Resuming in \d+ seconds/);
     f.update({ ...listing, listed: 140, current: 140 });
     assert.match(f.get('progressText').textContent, /140 found/);
     assert.equal(f.get('progressSection').classList.contains('hidden'), false);
@@ -175,5 +175,24 @@ test('reopening during a scheduled listing pause restores the bar and saved coun
         current: 0, fetched: 0, total: 0, error: null, listingComplete: false });
     await f.initialize();
     assert.equal(f.get('progressSection').classList.contains('hidden'), false);
-    assert.match(f.get('progressText').textContent, /1002 found.*Scheduled pause until/);
+    assert.match(f.get('progressText').textContent, /1002 found.*Resuming in \d+ seconds/);
+});
+
+
+test('scheduled pause countdown ticks down each second without hiding the listing bar', async () => {
+    const originalNow = Date.now;
+    let now = originalNow();
+    Date.now = () => now;
+    try {
+        const f = fixture({ ...base, status: 'waiting', phase: 'waiting', listed: 1186,
+            current: 0, fetched: 0, total: 0, error: null, listingComplete: false, resumeAt: now + 30_000 });
+        await f.initialize();
+        assert.match(f.get('progressText').textContent, /1186 found.*Resuming in 30 seconds/);
+        assert.equal(f.get('jobRetryTime').textContent, 'Resuming in 30 seconds');
+        now += 1000;
+        f.intervals[0]();
+        await new Promise(resolve => setImmediate(resolve));
+        assert.match(f.get('progressText').textContent, /Resuming in 29 seconds/);
+        assert.equal(f.get('progressSection').classList.contains('hidden'), false);
+    } finally { Date.now = originalNow; }
 });
