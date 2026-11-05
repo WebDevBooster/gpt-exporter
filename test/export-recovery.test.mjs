@@ -117,7 +117,7 @@ test('one intermittent success retains the backoff level and doubles pacing', as
     f.respond = message => message.id === 'conversation-1' ? { id: message.id, mapping: {} } : { error: '429', status: 429 };
     result = await f.run();
     assert.equal(result.job.fetched, 1);
-    assert.equal(result.job.rate.spacingMs, 6000);
+    assert.equal(result.job.rate.spacingMs, 12200);
     assert.equal(result.job.rate.level, 2);
     assert.equal(result.job.resumeAt - f.now, 120_000);
 });
@@ -313,7 +313,7 @@ test('listing audit reports no overlap when the returned conversation IDs are di
     assert.deepEqual(audit.examples, []);
 });
 
-test('stable traffic gradually restores 48-second pacing to the three-second baseline', async () => {
+test('stable traffic gradually restores 48-second pacing to the 6.1-second baseline', async () => {
     const f = fixture(81);
     await f.create();
     const job = await f.store.getJob();
@@ -329,12 +329,12 @@ test('stable traffic gradually restores 48-second pacing to the three-second bas
     }
     assert.equal(result.totalExported, 81);
     const saved = await f.store.getJob();
-    assert.equal(saved.rate.spacingMs, 3000);
+    assert.equal(saved.rate.spacingMs, 6100);
     const calls = f.calls.filter(c => c.message.action === 'getConversation');
-    for (const [index, delay] of [[20, 24_000], [40, 12_000], [60, 6000], [80, 3000]]) {
+    for (const [index, delay] of [[20, 24_000], [40, 12_000], [60, 6100], [80, 6100]]) {
         assert.equal(calls[index].at - calls[index - 1].at, delay);
     }
-    assert.equal(saved.events.filter(e => /20 successful requests/.test(e.message)).length, 4);
+    assert.equal(saved.events.filter(e => /20 successful requests/.test(e.message)).length, 3);
 });
 
 test('an old job stuck at 48 seconds with reset backoff is repaired once', async () => {
@@ -514,4 +514,47 @@ test('exceptions across output boundaries keep batches aligned after a worker re
     assert.equal(new Set(exported).size, 202);
     assert.deepEqual(exported, f.meta.filter(m => !omitted.has(m.id)).map(m => m.id));
     assert.deepEqual(f.batches.map(b => b.batch.length), [100, 100, 2]);
+});
+
+test('fresh and inherited pacing never send conversation requests less than 6.1 seconds apart', async () => {
+    const f = fixture(45);
+    const job = await f.create();
+    assert.equal(job.rate.spacingMs, 6100);
+    await f.run();
+    const calls = f.calls.filter(c => c.message.action === 'getConversation');
+    for (let i = 1; i < calls.length; i++) assert.ok(calls[i].at - calls[i - 1].at >= 6100);
+});
+
+test('upgrading a saved three-second job repairs its next slot and preserves a longer cooldown', async () => {
+    const f = fixture();
+    await f.create();
+    const job = await f.store.getJob();
+    Object.assign(job.rate, { spacingMs: 3000, nextRequestAt: f.now + 3000 });
+    job.lastActivityAt = f.now;
+    await f.store.save(job);
+    const start = f.now;
+    await f.run();
+    assert.equal(f.calls[0].at, start + 6100);
+    assert.equal((await f.store.getJob()).rate.spacingMs, 6100);
+    const fresh = await f.create();
+    Object.assign(fresh.rate, { spacingMs: 3000, nextRequestAt: f.now + 3000, cooldownUntil: f.now + 600_000 });
+    await f.store.save(fresh);
+    const before = f.calls.length;
+    assert.equal((await f.run()).job.resumeAt, fresh.rate.cooldownUntil);
+    assert.equal(f.calls.length, before);
+});
+
+
+test('a new job inherits the 6.1-second floor without bypassing an old reservation or cooldown', async () => {
+    const f = fixture();
+    const old = await f.create();
+    old.status = 'cancelled';
+    Object.assign(old.rate, { spacingMs: 3000, nextRequestAt: f.now + 3000, cooldownUntil: f.now + 120_000 });
+    await f.store.save(old);
+    const fresh = await f.create();
+    assert.equal(fresh.rate.spacingMs, 6100);
+    assert.equal(fresh.rate.nextRequestAt, f.now + 6100);
+    assert.equal(fresh.rate.cooldownUntil, old.rate.cooldownUntil);
+    assert.equal((await f.run()).job.resumeAt, old.rate.cooldownUntil);
+    assert.equal(f.calls.length, 0);
 });

@@ -95,7 +95,7 @@ function renderJobState(state) {
                 : 'All requested files finished saving.'
             : state.activity || 'Successful fetches are saved automatically.');
     document.getElementById('jobPacing').textContent = state.isRunning || state.canResume
-        ? `Request spacing: ${(state.spacingMs || 3000) / 1000} seconds · Backoff stage: ${state.retryLevel || 0}` : '';
+        ? `Request spacing: ${(state.spacingMs || 6100) / 1000} seconds · Backoff stage: ${state.retryLevel || 0}` : '';
     const retryAt = state.status === 'cooldown' || state.status === 'waiting' ? state.resumeAt : state.cooldownUntil;
     const seconds = Math.max(0, Math.ceil(((retryAt || 0) - Date.now()) / 1000));
     jobRetryTime.textContent = retryAt && seconds > 0
