@@ -134,7 +134,7 @@ test('Cancel remains available for paused Export All while Pause is a separate c
     f.update({ ...base, status: 'running', phase: 'fetching_list', listed: 112, activity: 'Listing conversations from item 113' });
     assert.equal(f.get('btnPauseProcess').classList.contains('hidden'), false);
     assert.match(f.get('jobCounts').textContent, /112 listed/);
-    assert.equal(f.get('jobMessage').textContent, 'ChatGPT rate limit. Progress is saved.');
+    assert.match(f.get('jobMessage').textContent, /Listing conversations from item 113: ChatGPT rate limit/);
     f.update({ ...base, status: 'cancelled', phase: 'cancelled', isRunning: false, error: null, canCancel: false, canResume: false });
     assert.equal(f.get('btnExportAll').disabled, false);
     assert.equal(f.get('btnResume').classList.contains('hidden'), true);

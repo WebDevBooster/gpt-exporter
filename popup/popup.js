@@ -87,7 +87,9 @@ function renderJobState(state) {
     jobStatusTitle.textContent = titles[state.status] || 'Export in progress';
     const pending = state.listingComplete === false && !['complete', 'cancelled'].includes(state.status) ? '?' : state.pending || 0;
     jobCounts.textContent = `${state.listed || 0} listed · ${state.projects || 0} projects · ${state.fetched || 0} fetched · ${pending} pending · ${state.saved || 0} saved · ${state.failed || 0} blocking errors`;
-    jobMessage.textContent = state.error || (state.status === 'complete' ? 'All requested files finished saving.' : state.activity || 'Successful fetches are saved automatically.');
+    jobMessage.textContent = state.error
+        ? `${state.activity && state.activity !== state.error ? `${state.activity}: ` : ''}${state.error}`
+        : (state.status === 'complete' ? 'All requested files finished saving.' : state.activity || 'Successful fetches are saved automatically.');
     document.getElementById('jobPacing').textContent = state.isRunning || state.canResume
         ? `Request spacing: ${(state.spacingMs || 3000) / 1000} seconds · Backoff stage: ${state.retryLevel || 0}` : '';
     const retryAt = state.status === 'cooldown' || state.status === 'waiting' ? state.resumeAt : state.cooldownUntil;
@@ -127,7 +129,7 @@ function renderJobState(state) {
     const logKey = `${state.status}:${state.phase}:${state.error || ''}:${state.retryLevel || 0}:${Math.floor((state.fetched || 0) / 25)}:${state.listed || 0}:${state.activity || ''}`;
     if (state.phase && logKey !== lastLogKey) {
         const retry = state.resumeAt ? ` ${state.status === 'paused' ? 'Resume no earlier than' : 'Next attempt at or after'} ${new Date(state.resumeAt).toLocaleTimeString()}.` : '';
-        log(`${jobStatusTitle.textContent}. ${jobCounts.textContent}. ${state.error || state.activity || ''}${retry}`,
+        log(`${jobStatusTitle.textContent}. ${jobCounts.textContent}. ${jobMessage.textContent}${retry}`,
             state.status === 'paused' ? 'error' : state.status === 'cooldown' ? 'warning' : 'info');
         lastLogKey = logKey;
     }
