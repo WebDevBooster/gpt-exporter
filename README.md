@@ -50,7 +50,7 @@ count as fetched or saved and never enter New/Updated history. Saved jobs from
 
 The window shows **not exported** alongside the other counts. At completion it
 shows **Export finished with exceptions** and includes a
-`GPT-Exporter_<job>_exceptions.json` report in the ZIP. If there are only
+`000_EXCEPTIONS.json` report as the first entry at the root of the ZIP. If there are only
 exceptions to report, it can save the report on its own. The report includes
 each omitted conversation's title, ID, HTTP status, server response and
 timestamp. Interrupted downloads can be retried from the saved payloads.

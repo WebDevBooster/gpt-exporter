@@ -28,6 +28,7 @@ const zipOptions = { compression: 'DEFLATE', compressionOptions: { level: 6 }, s
 // conversations is held at a time and the worker receives a small receipt.
 export async function buildSavedArchive({ jobId, ids, formats, report }, store, Zip) {
     const archive = new Zip();
+    if (report) archive.file(report.filename, report.content);
     const exported = [];
     const names = new Set();
     const parts = Math.ceil(ids.length / ARCHIVE_BATCH_SIZE);
@@ -62,7 +63,6 @@ export async function buildSavedArchive({ jobId, ids, formats, report }, store, 
             await archive.loadAsync(compressed);
         }
     }
-    if (report) archive.file(report.filename, report.content);
     const blob = await archive.generateAsync({ ...zipOptions, type: 'blob' });
     return { blob, exported, fileCount: names.size + Number(!!report) };
 }

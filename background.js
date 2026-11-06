@@ -279,7 +279,7 @@ async function downloadExportFiles(filesToBundle, folder, job, signal) {
 
 function buildExceptionsFile(job, exported) {
     return {
-        filename: `GPT-Exporter_${job.id.slice(0, 8)}_exceptions.json`,
+        filename: '000_EXCEPTIONS.json',
         content: JSON.stringify({
             jobId: job.id, generatedAt: new Date().toISOString(),
             requested: job.total, exported, notExported: job.exceptions.length,

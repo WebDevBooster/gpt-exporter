@@ -521,7 +521,7 @@ test('Export All downloads an exceptions report and never acknowledges omitted c
     const state = await f.send({ action: 'getExportState' });
     assert.equal(state.pending, 0);
     assert.equal(state.excluded, 1);
-    assert.match(state.exceptionsReport, /_exceptions\.json inside .*\.zip$/);
+    assert.match(state.exceptionsReport, /^000_EXCEPTIONS\.json inside .*\.zip$/);
 });
 
 test('End and Export during cooldown saves fetched conversations then Export Remaining skips them after restart', async () => {
@@ -698,7 +698,8 @@ test('End and Export saves 18 batches, both formats and the report in one valid 
         backedUpIds.push(...backup.conversations.map(c => c.id));
     }
     assert.deepEqual(backedUpIds, f.conversations.slice(5, job.cursor).map(c => c.id));
-    const [report] = zip.file(/_exceptions\.json$/);
+    assert.equal(Object.keys(zip.files)[0], '000_EXCEPTIONS.json');
+    const report = zip.file('000_EXCEPTIONS.json');
     const reportData = JSON.parse(await report.async('string'));
     assert.equal(reportData.exported, 1770);
     assert.deepEqual(reportData.exceptions, job.exceptions);
