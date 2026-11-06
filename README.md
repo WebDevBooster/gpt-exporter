@@ -22,10 +22,11 @@ Cancel remain separate controls.
 
 After the files finish saving, the window shows **Partial export saved** with
 its saved and remaining counts. **Export Remaining** starts a new job from the
-saved list, omitting every conversation whose files successfully saved. It also
-retries previously inaccessible conversations. The remaining list survives
-browser restarts and extension updates. Resuming respects any outstanding rate
-limit and requires the original ChatGPT account and workspace.
+saved list, omitting every conversation whose files successfully saved. It
+fetches pending conversations first and retries previously inaccessible ones
+at the end. The remaining list survives browser restarts and extension updates.
+Resuming respects any outstanding rate limit and requires the original ChatGPT
+account and workspace.
 
 If a partial download fails, **Retry Saving** retries the output from the saved
 payloads without fetching more conversations. Successfully saved conversations

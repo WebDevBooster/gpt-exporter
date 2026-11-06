@@ -607,7 +607,7 @@ test('failed partial download does not enter history and Retry Saving needs no C
     assert.equal(f.history().length, 2);
 });
 
-test('End and Export from manual pause retains exceptions and Export Remaining retries every unsaved ID', async () => {
+test('Export Remaining fetches pending conversations before retrying earlier exceptions', async () => {
     const f = await fixture({ count: 5, earlyState: 'complete' });
     f.responder = msg => msg.action === 'getConversation' && msg.id === f.conversations[1].id
         ? { error: '404', status: 404 }
@@ -631,7 +631,7 @@ test('End and Export from manual pause retains exceptions and Export Remaining r
     }
     assert.equal(state.status, 'complete');
     const newlyFetched = f.requests.slice(requests).filter(m => m.action === 'getConversation').map(m => m.id);
-    assert.deepEqual(newlyFetched, [f.conversations[1].id, f.conversations[3].id, f.conversations[4].id]);
+    assert.deepEqual(newlyFetched, [f.conversations[3].id, f.conversations[4].id, f.conversations[1].id]);
     assert.equal(f.history().length, 5);
 });
 

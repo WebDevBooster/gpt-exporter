@@ -620,7 +620,11 @@ async function resumeExport() {
         if (job.status === 'partial') {
             const excluded = new Set(job.exceptions.map(item => item.id));
             const savedIds = new Set(job.meta.filter(item => !excluded.has(item.id)).slice(0, job.saved).map(item => item.id));
-            const meta = job.meta.filter(item => !savedIds.has(item.id));
+            const unsaved = job.meta.filter(item => !savedIds.has(item.id));
+            const meta = [
+                ...unsaved.filter(item => !excluded.has(item.id)),
+                ...unsaved.filter(item => excluded.has(item.id))
+            ];
             const remaining = await runner.create({ kind: 'remaining', formats: job.formats,
                 folder: job.folder, limit: 0, meta, accountKey: job.accountKey,
                 listed: meta.length, projects: job.projects });
