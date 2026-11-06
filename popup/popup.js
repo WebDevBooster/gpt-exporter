@@ -97,7 +97,7 @@ function renderJobState(state) {
                 : 'All requested files finished saving.'
             : state.partial
                 ? `${state.saved || 0} conversations saved. ${state.remaining || 0} still not exported. Choose Export Remaining to continue later.${state.excluded ? ` See ${state.exceptionsReport || 'the exceptions report'} for inaccessible conversations.` : ''}`
-                : state.finishingEarly ? 'Saving conversations fetched so far. No more conversations will be fetched.'
+                : state.finishingEarly ? 'Saving conversations fetched so far in one ZIP.'
                 : state.activity || 'Successful fetches are saved automatically.');
     document.getElementById('jobPacing').textContent = state.isRunning || state.canResume
         ? `Request spacing: ${(state.spacingMs || 6100) / 1000} seconds · Backoff stage: ${state.retryLevel || 0}` : '';
@@ -387,7 +387,7 @@ function showProgress(phase, current, total) {
             percent = 70 + (total ? current / total : 0) * 15;
             break;
         case 'zipping':
-            phaseText = `Creating ZIP archive... ${total} files`;
+            phaseText = total ? `Creating ZIP archive... ${total} files` : 'Creating ZIP archive...';
             percent = 90;
             break;
         case 'partial':

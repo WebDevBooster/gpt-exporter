@@ -3,16 +3,14 @@
  * Handles extension messaging, API calls via content script, and downloads
  */
 
-import { conversationToMarkdown } from './export/markdown.js';
-import { createBackupJson } from './export/json.js';
+import { buildExportFiles } from './export/files.js';
 import { filterNeedingExport, markMultipleExported, getStats, clearHistory } from './sync/tracker.js';
 import { parseChatGPTConversationUrl } from './lib/chatgpt-url.js';
 import { createDownloadManager } from './lib/downloads.js';
 
 import { createExportStore } from './lib/export-store.js';
-import { createExportRunner, recordJobEvent, enforceMinimumSpacing } from './lib/export-job.js';
+import { createExportRunner, recordJobEvent, enforceMinimumSpacing, ZIP_THRESHOLD } from './lib/export-job.js';
 
-const ZIP_THRESHOLD = 3;
 const JOB_ALARM = 'gpt-exporter-resume';
 const jobStore = createExportStore();
 let activeRun = null;
@@ -42,13 +40,15 @@ function stopError(mode) {
 }
 
 function stateFromJob(job) {
+    const lastOutput = job?.results.at(-1);
     return job ? {
         isRunning: ['running', 'waiting', 'cooldown'].includes(job.status),
         phase: job.phase, status: job.status, current: job.phase === 'fetching_list' ? job.listed || 0 : (job.cursor ?? job.fetched), total: job.total,
         fetched: job.fetched, pending: job.status === 'cancelled' ? 0 : Math.max(0, job.total - (job.cursor ?? job.fetched)), saved: job.saved,
         failed: job.status === 'paused' && job.error && !job.error.startsWith('Export paused by user') ? 1 : 0,
         excluded: job.exceptions?.length || 0, processed: job.cursor ?? job.fetched,
-        exceptionsReport: job.exceptionsReportSaved ? job.results.at(-1)?.filename : null,
+        exceptionsReport: job.exceptionsReportSaved && lastOutput
+            ? (lastOutput.exceptionsReport ? `${lastOutput.exceptionsReport} inside ${lastOutput.filename}` : lastOutput.filename) : null,
         error: job.error, errorDetail: job.errorDetail, resumeAt: job.resumeAt, cooldownUntil: job.rate.cooldownUntil,
         retryLevel: job.rate.level, spacingMs: job.rate.spacingMs,
         events: job.events || [],
@@ -257,33 +257,13 @@ async function getCurrentConversationTarget() {
     throw new Error('No active ChatGPT conversation found. Open the chat you want to export, then try again.');
 }
 
-async function buildExportFiles(fullConversations, formats, reportProgress) {
-    const filesToBundle = [];
-
-    if (formats.markdown) {
-        const markdownOptions = { includeAboveBranchedFrom: !!formats.includeAboveBranchedFrom };
-        for (let i = 0; i < fullConversations.length; i++) {
-            const md = conversationToMarkdown(fullConversations[i], markdownOptions);
-            filesToBundle.push({ filename: md.filename, content: md.content, mimeType: 'text/markdown' });
-            reportProgress('exporting', i + 1, fullConversations.length);
-        }
-    }
-
-    if (formats.json) {
-        const json = createBackupJson(fullConversations);
-        filesToBundle.push({ filename: json.filename, content: json.content, mimeType: 'application/json' });
-    }
-
-    return filesToBundle;
-}
-
-async function downloadExportFiles(filesToBundle, folder = '', suffix = '', job, signal) {
+async function downloadExportFiles(filesToBundle, folder, job, signal) {
     const results = [];
 
     if (filesToBundle.length > ZIP_THRESHOLD) {
         updateExportState('zipping', 0, filesToBundle.length);
         const today = new Date().toISOString().split('T')[0];
-        const zipFilename = `ChatGPT_Export_${today}${suffix}.zip`;
+        const zipFilename = `ChatGPT_Export_${today}.zip`;
         await createZipBundle(filesToBundle, zipFilename, folder, job, signal);
         results.push({ type: 'zip', filename: zipFilename, fileCount: filesToBundle.length });
         return results;
@@ -295,6 +275,17 @@ async function downloadExportFiles(filesToBundle, folder = '', suffix = '', job,
     }
 
     return results;
+}
+
+function buildExceptionsFile(job, exported) {
+    return {
+        filename: `GPT-Exporter_${job.id.slice(0, 8)}_exceptions.json`,
+        content: JSON.stringify({
+            jobId: job.id, generatedAt: new Date().toISOString(),
+            requested: job.total, exported, notExported: job.exceptions.length,
+            exceptions: job.exceptions
+        }, null, 2)
+    };
 }
 
 async function markConversationsAsExported(fullConversations) {
@@ -548,20 +539,37 @@ const runner = createExportRunner({
             check();
             updateExportState(phase, current, total);
         });
-        const suffix = job.total > 100 ? `_${job.id.slice(0, 8)}_part-${Math.floor(job.saved / 100) + 1}` : '';
-        const results = await downloadExportFiles(files, job.folder, suffix, job, signal);
+        const results = await downloadExportFiles(files, job.folder, job, signal);
         check();
         await markConversationsAsExported(batch);
         return results;
     },
+    async finishArchive(metas, job, signal) {
+        const filename = `ChatGPT_Export_${job.id.slice(0, 8)}.zip`;
+        const folder = (job.folder || '').replace(/^[/\\]+|[/\\]+$/g, '');
+        const fullPath = folder ? `${folder}/${filename}` : filename;
+        const report = job.exceptions.length && !job.exceptionsReportSaved
+            ? buildExceptionsFile(job, job.saved + metas.length) : null;
+        updateExportState('zipping', 0, 0);
+        await ensureOffscreenDocument();
+        signal?.throwIfAborted();
+        const response = await chrome.runtime.sendMessage({
+            target: 'offscreen',
+            action: 'create-saved-archive',
+            jobId: job.id,
+            ids: metas.map(meta => meta.id),
+            formats: job.formats,
+            report
+        });
+        if (!response?.success) throw new Error(`ZIP creation failed: ${response?.error || 'No response from the archive builder'}`);
+        await downloadBlobUrl(response.url, fullPath, job, signal);
+        signal?.throwIfAborted();
+        if (response.exported.length) await markConversationsAsExported(response.exported);
+        return { type: 'zip', filename, fileCount: response.fileCount, exceptionsReport: report?.filename };
+    },
     async finishExceptions(job, signal) {
-        const filename = `GPT-Exporter_${job.id.slice(0, 8)}_exceptions.json`;
-        const report = {
-            jobId: job.id, generatedAt: new Date().toISOString(),
-            requested: job.total, exported: job.saved, notExported: job.exceptions.length,
-            exceptions: job.exceptions
-        };
-        await downloadFile(filename, JSON.stringify(report, null, 2), 'application/json', job.folder, job, signal);
+        const { filename, content } = buildExceptionsFile(job, job.saved);
+        await downloadFile(filename, content, 'application/json', job.folder, job, signal);
         return { filename, type: 'exceptions' };
     }
 });

@@ -20,6 +20,13 @@ function fixture(count = 1) {
             if (message.action === 'getAccountContext') return { accountKey: account };
             return respond ? respond(message) : { id: message.id, mapping: {} };
         },
+        finishExceptions: async () => ({ filename: 'exceptions.json' }),
+        finishArchive: async (metas, job) => {
+            if (job.exceptions.length && !job.exceptionsReportSaved) await options.finishExceptions(job);
+            const batch = await Promise.all(metas.map(meta => store.get(job, `conversation:${meta.id}`)));
+            const results = await options.finishBatch(batch, job);
+            return results[0] || { filename: 'archive.zip' };
+        },
         finishBatch: async (batch, job) => {
             batches.push({ batch, savedBeforeDownload: job.saved });
             return [{ filename: `part-${batches.length}.zip` }];
@@ -68,9 +75,8 @@ test('2515 conversations: 429 at 217 survives worker restart and resumes without
     assert.equal(complete.totalExported, 2515);
     assert.equal(f.calls.filter(c => c.message.id === 'conversation-1').length, 1);
     assert.equal(f.calls.filter(c => c.message.id === 'conversation-217').length, 2);
-    assert.equal(f.batches.length, 26);
-    assert.ok(f.batches.every(b => b.batch.length <= 100));
-    assert.equal(f.batches.reduce((n, b) => n + b.batch.length, 0), 2515);
+    assert.equal(f.batches.length, 1);
+    assert.equal(f.batches[0].batch.length, 2515);
     assert.equal((await f.store.getJob()).status, 'complete');
 });
 
@@ -459,7 +465,7 @@ test('deleted items are reported, but unknown 403 responses and metadata errors 
     assert.equal((await unknown.run()).job.status, 'paused');
 });
 
-test('report download failure retains exceptions and payloads and resumes without repeating fetches or successful batches', async () => {
+test('archive failure retains exceptions and payloads and resumes without repeating fetches', async () => {
     const f = fixture(3);
     f.options.finishExceptions = async () => { throw new Error('FILE_NO_SPACE'); };
     f.restart(); await f.create();
@@ -467,7 +473,7 @@ test('report download failure retains exceptions and payloads and resumes withou
         : { id: message.id, mapping: {} };
     let result = await f.run();
     assert.equal(result.job.status, 'paused');
-    assert.equal(result.job.saved, 2);
+    assert.equal(result.job.saved, 0);
     assert.equal(result.job.exceptions.length, 1);
     assert.ok(await f.store.get(result.job, 'conversation:conversation-1'));
     const calls = f.calls.filter(c => c.message.action === 'getConversation').length;
@@ -491,29 +497,30 @@ test('legacy fetched checkpoint migrates to the separate cursor without refetchi
     assert.equal(f.calls.filter(c => c.message.id === 'conversation-1').length, 0);
 });
 
-test('exceptions across output boundaries keep batches aligned after a worker restart', async () => {
+test('a legacy batch checkpoint excludes previously saved chats and exceptions from the new archive', async () => {
     const f = fixture(205);
     const omitted = new Set(['conversation-2', 'conversation-102', 'conversation-205']);
     f.options.finishExceptions = async () => ({ filename: 'exceptions.json' });
-    let saves = 0;
-    f.options.finishBatch = async (batch, job) => {
-        if (++saves === 2) throw new Error('Interrupted output');
-        f.batches.push({ batch, savedBeforeDownload: job.saved });
-        return [];
-    };
+    const finishArchive = f.options.finishArchive;
+    f.options.finishArchive = async () => { throw new Error('Interrupted output'); };
     f.restart(); await f.create();
     f.respond = message => omitted.has(message.id) ? { error: '404', status: 404 }
         : { id: message.id, mapping: {} };
     const interrupted = await f.run();
-    assert.equal(interrupted.job.saved, 100);
+    assert.equal(interrupted.job.saved, 0);
     assert.equal(interrupted.job.fetched, 202);
     assert.equal(interrupted.job.cursor, 205);
+    const legacy = await f.store.getJob();
+    legacy.saved = 100;
+    legacy.results = [{ filename: 'previous-part.zip' }];
+    await f.store.save(legacy);
+    f.options.finishArchive = finishArchive;
     f.restart();
     assert.equal((await f.run()).totalExported, 202);
     const exported = f.batches.flatMap(b => b.batch.map(c => c.id));
-    assert.equal(new Set(exported).size, 202);
-    assert.deepEqual(exported, f.meta.filter(m => !omitted.has(m.id)).map(m => m.id));
-    assert.deepEqual(f.batches.map(b => b.batch.length), [100, 100, 2]);
+    assert.equal(new Set(exported).size, 102);
+    assert.deepEqual(exported, f.meta.filter(m => !omitted.has(m.id)).slice(100).map(m => m.id));
+    assert.equal(f.batches.length, 1);
 });
 
 test('fresh and inherited pacing never send conversation requests less than 6.1 seconds apart', async () => {
@@ -583,7 +590,7 @@ test('partial output survives a failed download and worker restart without fetch
     assert.equal((await f.store.getJob()).saved, 2);
 });
 
-test('a large partial export checkpoints each batch and survives alarm restarts without consulting ChatGPT', async () => {
+test('a large partial export hands every fetched payload to one archive without consulting ChatGPT', async () => {
     const f = fixture(350);
     const job = await f.create();
     job.meta = f.meta; job.total = 350; job.fetched = job.cursor = 250;
@@ -610,7 +617,7 @@ test('a large partial export checkpoints each batch and survives alarm restarts 
     assert.equal(result.totalExported, 250);
     assert.equal(result.remaining, 100);
     assert.equal(f.calls.length, 0);
-    assert.deepEqual(f.batches.map(b => b.batch.length), [100, 100, 50]);
+    assert.deepEqual(f.batches.map(b => b.batch.length), [250]);
 });
 
 test('a new job inherits the 6.1-second floor without bypassing an old reservation or cooldown', async () => {

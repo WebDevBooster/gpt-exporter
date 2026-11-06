@@ -1,5 +1,13 @@
 # GPT Exporter
 
+### One archive for large exports (2.4.1)
+
+Exports of more than three conversations produce a single ZIP. **End & Export**
+also saves one ZIP, with any exceptions report inside. The extension prepares
+large archives in batches and waits for Chrome to save the archive before
+marking the conversations as exported. An interrupted older export bundles its
+unsaved conversations into one archive on retry.
+
 ### End & Export and a 6.1-second minimum (2.4.0)
 
 Request spacing never falls below **6.1 seconds**, including after rate-limit
@@ -41,12 +49,11 @@ count as fetched or saved and never enter New/Updated history. Saved jobs from
 2.3.0 through 2.3.3 resume from their existing fetched payloads.
 
 The window shows **not exported** alongside the other counts. At completion it
-shows **Export finished with exceptions** and downloads a separate
-`GPT-Exporter_<job>_exceptions.json` report into the selected output folder. The
-report includes each omitted conversation's title, ID, HTTP status, server
-response and timestamp. The job cannot complete until the report finishes
-saving. Interrupted report downloads can be resumed without fetching the
-conversations or saving completed batches again.
+shows **Export finished with exceptions** and includes a
+`GPT-Exporter_<job>_exceptions.json` report in the ZIP. If there are only
+exceptions to report, it can save the report on its own. The report includes
+each omitted conversation's title, ID, HTTP status, server response and
+timestamp. Interrupted downloads can be retried from the saved payloads.
 
 
 ### Request pacing recovery (2.3.3)
@@ -113,13 +120,10 @@ extension icon shows `429` during cooldown and `!` when action is required.
 Use **Pause Export**, **Resume Export** or **Cancel Export** to manage an
 unfinished export. Cancelling a job does not bypass an active server cooldown.
 
-Output is prepared in batches of at most 100 conversations to bound memory use.
-Larger exports produce numbered ZIP parts when exporting Markdown, or multiple
-JSON backups when only JSON is selected. Each batch enters New/Updated history
-only after all its requested files finish saving. A worker interruption during
-saving can cause the current batch to be downloaded again, but cannot cause it
-to be silently omitted. Fetched data is removed when a job completes or is
-explicitly discarded. The latest job's status and recent events remain visible.
+Large archives are prepared in batches of at most 100 conversations to bound
+memory use. The completed archive enters New/Updated history after Chrome
+finishes saving it. Fetched data is removed when a job completes or is explicitly
+discarded. The latest job's status and recent events remain visible.
 
 To update an unpacked installation, reload **GPT Exporter** on
 `chrome://extensions/`, then reload the ChatGPT tab. Version 2.3.0 cannot recover
@@ -167,7 +171,7 @@ During the download process you can open a new browser window and do any non-Cha
 
 If you use **Projects** in ChatGPT (like I do) to organize things, GPT Exporter will automatically create folders with those project names and put all the corresponding `.md` files inside. 
 
-Small exports produce separate files. Larger Markdown exports produce ZIP files, with up to 100 conversations in each numbered part. A requested JSON backup is included with its batch.
+Up to three conversations can be saved as separate files. Larger exports produce one ZIP containing all requested formats and any exceptions report.
 
 ### Manual changes will be overwritten on update
 

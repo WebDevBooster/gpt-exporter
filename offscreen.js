@@ -8,6 +8,11 @@
  * any size work.
  */
 
+import { createExportStore } from './lib/export-store.js';
+import { buildSavedArchive } from './export/files.js';
+
+const store = createExportStore();
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || message.target !== 'offscreen') {
         return; // Not for us
@@ -51,6 +56,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             }
         })();
         return true; // Keep message channel open for async sendResponse
+    } else if (message.action === 'create-saved-archive') {
+        buildSavedArchive(message, store, globalThis.JSZip).then(({ blob, ...receipt }) => {
+            sendResponse({ success: true, url: URL.createObjectURL(blob), ...receipt });
+        }).catch(error => sendResponse({ success: false, error: error.message }));
+        return true;
     } else if (message.action === 'revoke-blob-url') {
         try {
             URL.revokeObjectURL(message.url);

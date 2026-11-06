@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import { IDBFactory } from 'fake-indexeddb';
 import { test, afterEach } from 'node:test';
 import { setTimeout as delay, setImmediate as tick } from 'node:timers/promises';
+import { createExportStore } from '../lib/export-store.js';
+import { buildSavedArchive } from '../export/files.js';
+import '../lib/jszip.min.js';
 
 function event() {
     const listeners = new Set();
@@ -45,7 +48,8 @@ async function fixture({ count = 1, startError, earlyState } = {}) {
     const storage = {};
     const downloads = [];
     const revoked = [];
-    const generated = [];
+    const generated = [], archives = [];
+    const store = createExportStore();
     const onChanged = event();
     const onAlarm = event();
     const alarms = new Map(), badges = [], requests = [], notifications = [];
@@ -67,6 +71,12 @@ async function fixture({ count = 1, startError, earlyState } = {}) {
             async sendMessage(msg) {
                 if (msg.type === 'progress') notifications.push({ phase: msg.phase, status: msg.status, listed: msg.listed, fetched: msg.fetched, activity: msg.activity });
                 if (msg.action === 'revoke-blob-url') revoked.push(msg.url);
+                if (msg.action === 'create-saved-archive') {
+                    generated.push(msg);
+                    const { blob, ...receipt } = await buildSavedArchive(msg, store, globalThis.JSZip);
+                    archives.push(blob);
+                    return { success: true, url: `blob:fixture-${generated.length}`, ...receipt };
+                }
                 if (msg.action === 'create-blob-url' || msg.action === 'create-zip-blob-url') {
                     generated.push(msg);
                     return { success: true, url: `blob:fixture-${generated.length}` };
@@ -124,7 +134,7 @@ async function fixture({ count = 1, startError, earlyState } = {}) {
         return result;
     }
     const history = () => Object.keys(storage.gpt_exporter_sync_data?.exportedConversations || {});
-    const f = { send, downloads, generated, revoked, history, finish, conversations, alarms, badges, requests, notifications,
+    const f = { send, downloads, generated, archives, store, revoked, history, finish, conversations, alarms, badges, requests, notifications,
         set responder(fn) { responder = fn; },
         set downloadStart(fn) { downloadStart = fn; },
         advanceTo(time) { virtualTime = time; },
@@ -218,9 +228,9 @@ test('ZIP interruption and successful retry have the same history boundary', { t
     const f = await fixture({ count: 4 });
     const run = () => f.send({ action: 'exportAll', formats: { markdown: true }, limit: 4 });
     const failed = run();
-    await until(() => f.generated.some(g => g.action === 'create-zip-blob-url'), 15000);
+    await until(() => f.generated.some(g => g.action === 'create-saved-archive'), 15000);
     await until(() => f.downloads.length === 1);
-    assert.equal(f.generated[0].files.length, 4);
+    assert.equal(f.generated[0].ids.length, 4);
     assert.match(f.downloads[0].options.filename, /\.zip$/);
     assert.deepEqual(f.history(), []);
     f.finish(1, 'interrupted', 'FILE_FAILED');
@@ -402,6 +412,8 @@ test('Export All: 2515 conversations traverse pagination, 429 at 217 and worker 
     }
     assert.ok(rounds > 50, 'This test must exercise many bounded worker runs');
     assert.equal(f.history().length, 2515);
+    assert.equal(f.downloads.length, 1);
+    assert.match(f.downloads[0].options.filename, /\.zip$/);
     assert.equal(f.requests.filter(r => r.action === 'getConversation').length, 2516, 'Only the throttled conversation is retried');
     assert.equal(f.requests.filter(r => r.action === 'getConversation' && r.id === f.conversations[0].id).length, 1);
     assert.equal(f.requests.filter(r => r.action === 'getConversation' && r.id === f.conversations[216].id).length, 2);
@@ -495,7 +507,8 @@ test('Export All downloads an exceptions report and never acknowledges omitted c
     assert.equal(result.exceptions, 1);
     assert.equal(f.history().length, 3);
     assert.ok(!f.history().includes(f.conversations[1].id));
-    const reportFile = f.generated.find(item => item.mimeType === 'application/json');
+    const reportFile = f.generated[0].report;
+    assert.equal(f.downloads.length, 1);
     assert.ok(reportFile);
     const report = JSON.parse(reportFile.content);
     assert.equal(report.requested, 4);
@@ -508,7 +521,7 @@ test('Export All downloads an exceptions report and never acknowledges omitted c
     const state = await f.send({ action: 'getExportState' });
     assert.equal(state.pending, 0);
     assert.equal(state.excluded, 1);
-    assert.match(state.exceptionsReport, /_exceptions.json$/);
+    assert.match(state.exceptionsReport, /_exceptions\.json inside .*\.zip$/);
 });
 
 test('End and Export during cooldown saves fetched conversations then Export Remaining skips them after restart', async () => {
@@ -588,9 +601,8 @@ test('failed partial download does not enter history and Retry Saving needs no C
     const retry = f.send({ action: 'resumeExport' });
     await until(() => f.downloads.length === 2);
     f.finish(2, 'complete');
-    await until(() => f.downloads.length === 3);
-    f.finish(3, 'complete');
     assert.equal((await retry).partial, true);
+    assert.equal(f.downloads.length, 2, 'Each attempt prompts for a single ZIP');
     assert.equal(f.requests.length, requests);
     assert.equal(f.history().length, 2);
 });
@@ -642,4 +654,52 @@ test('New and Updated skips conversations saved by End and Export', async () => 
     assert.equal(next.status, 'complete');
     assert.deepEqual(f.requests.slice(requests).filter(m => m.action === 'getConversation').map(m => m.id),
         f.conversations.slice(2).map(c => c.id));
+});
+
+test('three conversations still save as separate Markdown files', async () => {
+    const f = await fixture({ count: 3, earlyState: 'complete' });
+    const result = await f.send({ action: 'exportAll', formats: { markdown: true } });
+    assert.equal(result.totalExported, 3);
+    assert.equal(f.downloads.length, 3);
+    assert.ok(f.downloads.every(item => item.options.filename.endsWith('.md')));
+});
+
+test('End and Export saves 18 batches, both formats and the report in one valid ZIP', { timeout: 30000 }, async () => {
+    const f = await fixture({ count: 1776, earlyState: 'complete' });
+    const meta = f.conversations.map(({ id, title }) => ({ id, title }));
+    const job = {
+        id: crypto.randomUUID(), status: 'paused', phase: 'paused', kind: 'all', meta,
+        total: meta.length, fetched: 1770, cursor: 1775, saved: 0, results: [],
+        formats: { markdown: true, json: true }, folder: 'test-exports',
+        exceptions: meta.slice(0, 5).map(({ id, title }) => ({ id, title, status: 404 })),
+        rate: { spacingMs: 6100, cooldownUntil: Date.now() + 120_000, nextRequestAt: 0 }
+    };
+    await f.store.save(job);
+    for (const conversation of f.conversations.slice(5, job.cursor)) {
+        await f.store.put(job, `conversation:${conversation.id}`, conversation);
+    }
+
+    const result = await f.send({ action: 'endAndExport' });
+    assert.equal(result.totalExported, 1770);
+    assert.equal(result.remaining, 6);
+    assert.equal(f.requests.length, 0);
+    assert.equal(f.downloads.length, 1);
+    assert.match(f.downloads[0].options.filename, /^test-exports\/.*\.zip$/);
+    assert.equal(f.history().length, 1770);
+
+    const zip = await globalThis.JSZip.loadAsync(await f.archives[0].arrayBuffer(), { checkCRC32: true });
+    const markdown = zip.file(/\.md$/);
+    const backups = zip.file(/chatgpt_backup_.*\.json$/);
+    assert.equal(markdown.length, 1770);
+    assert.equal(backups.length, 18);
+    const backedUpIds = [];
+    for (const file of backups) {
+        const backup = JSON.parse(await file.async('string'));
+        backedUpIds.push(...backup.conversations.map(c => c.id));
+    }
+    assert.deepEqual(backedUpIds, f.conversations.slice(5, job.cursor).map(c => c.id));
+    const [report] = zip.file(/_exceptions\.json$/);
+    const reportData = JSON.parse(await report.async('string'));
+    assert.equal(reportData.exported, 1770);
+    assert.deepEqual(reportData.exceptions, job.exceptions);
 });
