@@ -12,7 +12,9 @@ unsaved conversations into one archive on retry.
 
 Request spacing never falls below **6.1 seconds**, including after rate-limit
 recovery. Existing saved jobs and inherited rate state receive the same floor
-without shortening server cooldowns or Retry-After deadlines.
+without shortening server cooldowns or Retry-After deadlines. After 30 minutes
+of inactivity beyond the last request or cooldown deadline, pacing returns to
+6.1 seconds.
 
 **End & Export** stops further fetching and saves the conversations already
 fetched, using the job's original formats and output folder. It works while

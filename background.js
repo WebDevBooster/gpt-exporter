@@ -9,7 +9,7 @@ import { parseChatGPTConversationUrl } from './lib/chatgpt-url.js';
 import { createDownloadManager } from './lib/downloads.js';
 
 import { createExportStore } from './lib/export-store.js';
-import { createExportRunner, recordJobEvent, enforceMinimumSpacing, ZIP_THRESHOLD } from './lib/export-job.js';
+import { createExportRunner, recordJobEvent, enforceMinimumSpacing, recoverIdlePacing, ZIP_THRESHOLD } from './lib/export-job.js';
 
 const JOB_ALARM = 'gpt-exporter-resume';
 const jobStore = createExportStore();
@@ -689,6 +689,7 @@ const ready = (async () => {
     const job = await jobStore.getJob(false);
     if (!job) return;
     enforceMinimumSpacing(job);
+    recoverIdlePacing(job);
     await jobStore.save(job);
     notifyJob(job);
     // Recreate alarms after worker termination, extension update or browser restart.

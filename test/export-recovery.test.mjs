@@ -633,3 +633,37 @@ test('a new job inherits the 6.1-second floor without bypassing an old reservati
     assert.equal((await f.run()).job.resumeAt, old.rate.cooldownUntil);
     assert.equal(f.calls.length, 0);
 });
+
+test('a long pause clears inherited backoff before fetching from the saved queue', async () => {
+    const f = fixture(3);
+    const job = await f.create();
+    job.status = 'paused';
+    job.meta = f.meta;
+    job.total = 3;
+    job.fetched = job.cursor = 1;
+    job.lastActivityAt = f.now;
+    Object.assign(job.rate, { spacingMs: 60_000, level: 3, recovering: true, nextRequestAt: f.now + 60_000,
+        cooldownUntil: f.now + 240_000 });
+    await f.store.commit(job, 'conversation:conversation-1', { id: 'conversation-1', mapping: {} });
+    f.now += 9 * 3600_000;
+    f.restart();
+    assert.equal((await f.run()).totalExported, 3);
+    const fetches = f.calls.filter(call => call.message.action === 'getConversation');
+    assert.deepEqual(fetches.map(call => call.message.id), ['conversation-2', 'conversation-3']);
+    assert.equal(fetches[1].at - fetches[0].at, 6100);
+    assert.equal((await f.store.getJob()).rate.level, 0);
+});
+
+test('inactivity cannot reset pacing while a long server cooldown is still active', async () => {
+    const f = fixture();
+    const job = await f.create();
+    Object.assign(job.rate, { spacingMs: 60_000, level: 3, recovering: true, nextRequestAt: f.now + 60_000,
+        cooldownUntil: f.now + 12 * 3600_000 });
+    await f.store.save(job);
+    f.now += 9 * 3600_000;
+    const result = await f.run();
+    assert.equal(result.job.status, 'cooldown');
+    assert.equal(result.job.resumeAt, job.rate.cooldownUntil);
+    assert.equal(result.job.rate.spacingMs, 60_000);
+    assert.equal(f.calls.length, 0);
+});
